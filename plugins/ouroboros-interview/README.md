@@ -1,18 +1,25 @@
-# Ouroboros interview
+# Ouroboros interview and unstuck
 
-A standalone Socratic requirements interview for an existing agent session.
-It clarifies goals, constraints, and acceptance criteria, checks for material
-unresolved decisions, and ends with an agreed requirements summary.
+Standalone Socratic interview and lateral-thinking workflows for an existing
+agent session. The interview clarifies goals, constraints, and acceptance
+criteria. Unstuck examines repeated failures or consequential decisions from
+independent perspectives and recommends one next move.
 
 ## Contents
 
-The plugin contains one skill, `interview`, and four reference prompts:
-Socratic interviewer, interview closer, contrarian, and gap hunter. The host
-reads code, asks questions, and runs review subagents through its native tools.
-When subagents are unavailable, the skill uses clearly identified self-review.
-It requires no additional runtime packages or services.
+The plugin contains two skills:
 
-The skill does not install software, change agent configuration, write
+- `interview`, with Socratic interviewer, interview closer, contrarian, and gap
+  hunter prompts.
+- `unstuck`, with hacker, researcher, simplifier, architect, and contrarian
+  prompts.
+
+The host reads relevant sources, asks questions, and runs review subagents
+through its native tools. When subagents are unavailable, the skills use
+clearly identified self-review. They require no additional runtime packages or
+services.
+
+The skills do not install software, change agent configuration, write
 preference files, check for updates, or start implementation. Results remain in
 the conversation unless the user requests a summary file.
 
@@ -31,10 +38,12 @@ Reload the plugins, then invoke:
 
 ```text
 /ouroboros-interview:interview Describe the idea or decision to clarify.
+/ouroboros-interview:unstuck Describe the repeated failure or hard decision.
 ```
 
-For another host that loads skill folders, load `skills/interview` from this
-plugin directory. Keep its `references` directory beside `SKILL.md`.
+For another host that loads skill folders, load `skills/interview` or
+`skills/unstuck` from this plugin directory. Keep each skill's `references`
+directory beside `SKILL.md`.
 
 ## Checks
 
@@ -45,13 +54,13 @@ claude plugin validate ./plugins/ouroboros-interview
 node --test tests/interview-plugin.test.mjs
 ```
 
-These checks validate packaging and local references, not interview quality.
+These checks validate packaging and local references, not workflow quality.
 
 ## Source and license
 
-The interview and review method is adapted from
+The interview, review, and lateral-thinking methods are adapted from
 [Q00/ouroboros](https://github.com/Q00/ouroboros). Only this directory is the
-interview-only distribution. The other directories in the fork are not part
-of the plugin.
+standalone distribution. The other directories in the fork are not part of the
+plugin.
 
 The plugin retains the upstream [MIT license](LICENSE).

@@ -1,6 +1,6 @@
 {
   "name": "ouroboros-interview",
-  "description": "A standalone Socratic requirements interview with bundled questioning and closure-review prompts.",
+  "description": "Standalone Socratic interview and unstuck workflows with bundled review and lateral-thinking prompts.",
   "author": { "name": "Q00" },
   "repository": "https://github.com/ramtoshiya/ouroboros",
   "license": "MIT",
