@@ -15,7 +15,7 @@ function files(directory) {
   });
 }
 
-test("the isolated distribution contains one self-contained interview skill and no runtime integrations", (t) => {
+test("the isolated distribution contains self-contained interview and unstuck skills with no runtime integrations", (t) => {
   const workspace = mkdtempSync(join(tmpdir(), "ouroboros-interview-check-"));
   t.after(() => rmSync(workspace, { recursive: true, force: true }));
   const installed = join(workspace, "plugin");
@@ -30,9 +30,11 @@ test("the isolated distribution contains one self-contained interview skill and 
   const skillRoot = resolve(installed, manifest.skills);
   assert.ok(skillRoot.startsWith(`${installed}${sep}`));
   const skillNames = readdirSync(skillRoot).filter((name) => statSync(join(skillRoot, name)).isDirectory());
-  assert.deepEqual(skillNames, ["interview"]);
-  const skill = readFileSync(join(skillRoot, "interview/SKILL.md"), "utf8");
-  assert.match(skill, /^---\nname: interview\n/);
+  assert.deepEqual(skillNames, ["interview", "unstuck"]);
+  for (const skillName of skillNames) {
+    const skill = readFileSync(join(skillRoot, `${skillName}/SKILL.md`), "utf8");
+    assert.match(skill, new RegExp(`^---\\nname: ${skillName}\\n`));
+  }
   assert.equal(manifest.license, "MIT");
   assert.match(readFileSync(join(installed, "LICENSE"), "utf8"), /Copyright \(c\) 2025 Q00/);
 
