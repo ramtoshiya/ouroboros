@@ -1,0 +1,52 @@
+name: Sync upstream
+
+on:
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  rebase:
+    name: Rebase fork customizations
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Rebase onto upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          before=$(git rev-parse HEAD)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/Q00/ouroboros.git
+          git fetch --no-tags upstream main
+
+          if git merge-base --is-ancestor upstream/main HEAD; then
+            echo "Fork is already current with upstream."
+            exit 0
+          fi
+
+          if ! git rebase upstream/main; then
+            git rebase --abort
+            echo "Automatic rebase failed. Resolve the conflicts manually."
+            exit 1
+          fi
+
+          node --test tests/interview-plugin.test.mjs
+          git push --no-follow-tags \
+            --force-with-lease=refs/heads/main:"$before" \
+            origin HEAD:main
