@@ -13,6 +13,8 @@ replayable execution contract on your choice of runtime backend.
 
 - **[Getting Started Guide](./getting-started.md)** - **Single source of truth for onboarding**: installation, configuration, first-run flow, and troubleshooting
 - [Platform Support](./platform-support.md) - Python versions, OS compatibility, and supported runtime backends
+- [Console Guide](./guides/console.md) - The `ouroboros gui` web console: connect agent tools, pick agents and models, chat, and follow runs
+- [How Ouroboros Works](./how-ouroboros-works.md) - The loop, the agents, the ambiguity gate, the Agent OS stack, architecture, and the philosophy behind it
 
 ### Runtime Guides
 
@@ -20,6 +22,8 @@ replayable execution contract on your choice of runtime backend.
 - [Codex CLI](./runtime-guides/codex.md) - Backend-specific configuration and CLI options (see [Getting Started](./getting-started.md) for install/onboarding)
 - [OpenCode](./runtime-guides/opencode.md) - Interactive plugin mode and headless subprocess runtime
 - [Hermes](./runtime-guides/hermes.md) - Hermes Agent runtime setup and `ooo` dispatch
+- [GitHub Copilot CLI](./runtime-guides/copilot.md) - Existing Copilot setup and one-shot execution
+- [GitHub Copilot ACP (experimental)](./runtime-guides/copilot-acp.md) - Opt-in live task activity over stdio, with permissions and durable replay
 - [Zcode](./runtime-guides/zcode.md) - Z.ai desktop-agent runtime and measured CLI contract
 - [Runtime Capability Matrix](./runtime-capability-matrix.md) - Feature comparison across runtime backends
 - [Claude Code (한국어)](./runtime-guides/claude-code.ko.md) - 같은 문서의 한국어판
@@ -70,6 +74,7 @@ replayable execution contract on your choice of runtime backend.
 - [The Development Loop](./contributing/developing.md) - Run your own code, not the published package: local MCP, config, state, fastest verification per change type
 - [Review Conventions](./contributing/review-conventions.md) - What the review bot demands, with evidence from real reviews
 - [CI Gates and Branch Protection](./contributing/ci-gates.md) - Required checks, local reproduction, release order
+- [Docs Freshness](./contributing/docs-freshness.md) - Verify, generate, trigger, quarantine: how docs drift is caught and what to do when a docs check fails
 - [Architecture for Contributors](./contributing/architecture-overview.md) - How modules connect
 - [Source Tour](./contributing/source-tour.md) - Three core mechanisms mapped to file:line coordinates, for teardown writers and reviewers
 - [Agent OS Kernel Terminology](./contributing/agent-os-kernel-terminology.md) - Locked vocabulary for `AgentRuntimeContext`, `ControlPlane`, `ControlContract`, `Directive`, `ControlBus`, and `IOJournal`
@@ -86,9 +91,13 @@ These documents preserve point-in-time evidence and work orders. They are
 immutable, non-normative history; use [#961](https://github.com/Q00/ouroboros/issues/961)
 for current AgentOS sequencing.
 
+- [`ooo auto` Analysis Notes (2026-05-09)](./history/ooo-auto-analysis.md) - Historical walkthrough of the `ooo auto` mechanism plus LinkedIn announcement copy (Korean)
+- [`ooo auto` Evolution Plan (2026-05-09)](./history/ooo-auto-evolution-plan.md) - Phased plan behind RFC [#809](https://github.com/Q00/ouroboros/issues/809) (Korean)
 - [AgentOS Release Readiness (2026-05-29)](./history/agentos/release-readiness.md) - Historical release triage and verification snapshot
 - [AgentOS Issue Sequencing Graph (2026-05-29)](./history/agentos/issue-sequencing-graph.md) - Historical issue-state and work-order snapshot
 - [Master Roadmap 2026-07](./history/master-roadmap-2026-07.md) - Superseded PR-A through PR-K execution plan with final dispositions
+- [Run Meta-Harness Plan 2026-07](./history/run-metaharness-plan-2026-07.md) - Proposed verify-by-default, context-pack, and cross-harness plan (companion to the master roadmap)
+- [Contract-AC Grounding Handoff 2026-07](./history/handoff-auto-contract-ac-grounding-2026-07.md) - Implementer handoff for grounding contract-AC evaluation so `ooo auto` completes on Codex
 
 
 ## Key Concepts
@@ -96,19 +105,19 @@ for current AgentOS sequencing.
 ### The Six Phases
 
 1. **Big Bang (Phase 0)** - Socratic and ontological questioning to crystallize requirements into a Seed (Ambiguity <= 0.2)
-2. **PAL Router (Phase 1)** - Progressive Adaptive LLM selection (Frugal -> Standard -> Frontier)
-3. **Double Diamond (Phase 2)** - Discover, Define, Design, Deliver with recursive decomposition
+2. **PAL Router (Phase 1)** - Progressive Adaptive LLM selection (Frugal -> Standard -> Frontier), escalating on retry
+3. **Execution (Phase 2)** - Dependency-staged AC fan-out to agent runtimes, splitting an AC only when it spans independently verifiable units
 4. **Resilience (Phase 3)** - Stagnation detection and lateral thinking via persona rotation
 5. **Evaluation (Phase 4)** - Three-stage verification (Mechanical, Semantic, Consensus)
 6. **Secondary Loop (Phase 5)** - TODO registry and batch processing
 
 ### Economic Model
 
-| Tier | Cost | When |
+| Tier | Cost | When (shipped defaults) |
 |:----:|:----:|------|
-| FRUGAL | 1x | complexity < 0.4 |
-| STANDARD | 10x | complexity < 0.7 |
-| FRONTIER | 30x | critical decisions |
+| FRUGAL | 1x | Trusted decomposed children, when child lowering is enabled |
+| STANDARD | 10x | Default for top-level ACs |
+| FRONTIER | 30x | Reached by escalation after failures |
 
 ### Core Principles
 

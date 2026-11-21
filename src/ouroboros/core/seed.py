@@ -37,6 +37,7 @@ from pydantic import (
 from pydantic_core.core_schema import SerializerFunctionWrapHandler
 
 from ouroboros.core.conductor import ConductorDirective
+from ouroboros.core.material_evidence import MaterialEvidenceRef
 
 _OUTPUT_ASSERTION_CONDITION_RE = re.compile(
     r"^(?:exit\s*(?:code|status)?\s*0|returns?\s*0|success|succeeds|passed|passes|ok exit|no errors?)$",
@@ -208,6 +209,7 @@ def parse_expected_artifact_list(value: str) -> tuple[str, ...]:
 def validate_ac_success_contract_values(
     *,
     verify_command: str | None,
+    verify_cwd: str | None = None,
     expected_artifacts: tuple[str, ...],
     output_assertion: str | None,
 ) -> None:
@@ -220,6 +222,8 @@ def validate_ac_success_contract_values(
     """
     if verify_command is not None and not isinstance(verify_command, str):
         raise ValueError("success contract verify command is invalid")
+    if verify_cwd is not None and not isinstance(verify_cwd, str):
+        raise ValueError("success contract verify cwd is invalid")
     if output_assertion is not None and not isinstance(output_assertion, str):
         raise ValueError("success contract output assertion is invalid")
     try:
@@ -231,7 +235,7 @@ def validate_ac_success_contract_values(
             f"success contract artifact limit exceeded ({MAX_AC_SUCCESS_CONTRACT_ARTIFACTS})"
         )
 
-    contract_chars = len(verify_command or "") + len(output_assertion or "")
+    contract_chars = len(verify_command or "") + len(verify_cwd or "") + len(output_assertion or "")
     for path in expected_artifacts:
         try:
             encoded_path = (
@@ -287,9 +291,10 @@ class SourcedScope(BaseModel, frozen=True):
     """The Seed content with a known source, recorded where the Seed is made.
 
     ``ooo auto`` stamps it from ledger provenance: the goal entry the user
-    wrote and the constraints and criteria whose entries bind
-    (``LedgerEntry.binds_seed``). When a Seed carries it, the worker's
-    execution prompt renders only this record, ``requester_answers`` and
+    wrote, the constraints and criteria whose entries bind
+    (``LedgerEntry.binds_seed``), and the answers auto chose for its own
+    interview questions. When a Seed carries it, the worker's execution
+    prompt renders only this record, ``requester_answers`` and
     ``repo_facts``. The model-written fields (``goal`` as rewritten,
     ``constraints``, ``acceptance_criteria``, ``assumptions``, the ontology,
     the evaluation principles and the exit conditions) stay in the Seed for
@@ -299,11 +304,26 @@ class SourcedScope(BaseModel, frozen=True):
         goal: The user's request, verbatim.
         constraints: Constraints and non-goals that bind by ledger provenance, verbatim.
         acceptance_criteria: Acceptance criteria that bind by ledger provenance, verbatim.
+        assumptions: Answers auto chose for interview questions nobody
+            confirmed (ledger entries that do not bind, carry the question and
+            hold the answer refiner's value), verbatim. They never bind: the
+            worker sees them in their own section, labelled as unconfirmed,
+            never as constraints or criteria.
+        expected_experience: What a typical current product of the requested
+            kind includes, from auto's research for a new product
+            (``auto/expectations.py``), one capability per line. The worker
+            sees it as the floor of a good result, never as acceptance
+            criteria: nothing verifies, decomposes or prices it.
+        expected_experience_sources: URLs the research reported reading, kept
+            for the record and never rendered.
     """
 
     goal: str = Field(..., min_length=1)
     constraints: tuple[str, ...] = ()
     acceptance_criteria: tuple[str, ...] = ()
+    assumptions: tuple[str, ...] = ()
+    expected_experience: tuple[str, ...] = ()
+    expected_experience_sources: tuple[str, ...] = ()
 
 
 class ExitCondition(BaseModel, frozen=True):
@@ -591,6 +611,16 @@ class AcceptanceCriterionSpec(BaseModel, frozen=True):
     description: str = Field(..., min_length=1)
     semantic_ac_key: str | None = Field(default=None, pattern=r"^ac_[a-f0-9]{16}$")
     verify_command: str | None = Field(default=None)
+    verify_cwd: str | None = Field(
+        default=None,
+        description=(
+            "Workspace-relative directory verify_command runs in (e.g. 'app' "
+            "for a project whose test config lives in a subdirectory). The "
+            "verify gate resolves it under the run workspace and rejects any "
+            "path that escapes it. Default: the sole nested Node project for "
+            "npm/npx/yarn/pnpm, otherwise the workspace root."
+        ),
+    )
     expected_artifacts: tuple[str, ...] = Field(
         default_factory=tuple,
         description=(
@@ -667,7 +697,7 @@ class AcceptanceCriterionSpec(BaseModel, frozen=True):
             return stripped
         return value
 
-    @field_validator("verify_command", mode="before")
+    @field_validator("verify_command", "verify_cwd", mode="before")
     @classmethod
     def _strip_optional_text(cls, value: Any) -> Any:
         if isinstance(value, str):
@@ -717,6 +747,16 @@ class AcceptanceCriterionSpec(BaseModel, frozen=True):
             raise ValueError("verify_exemption_reason is mutually exclusive with verify_command")
         if self.output_assertion and not self.verify_command:
             raise ValueError("output_assertion requires verify_command")
+        if self.verify_cwd:
+            if not self.verify_command:
+                raise ValueError("verify_cwd requires verify_command")
+            cwd_error = (
+                None if self.verify_cwd == "." else expected_artifact_path_error(self.verify_cwd)
+            )
+            if cwd_error is not None:
+                raise ValueError(
+                    f"verify_cwd must be a portable workspace-relative path: {cwd_error}"
+                )
         invalid_artifacts = tuple(
             (artifact, error)
             for artifact in self.expected_artifacts
@@ -729,6 +769,7 @@ class AcceptanceCriterionSpec(BaseModel, frozen=True):
             )
         validate_ac_success_contract_values(
             verify_command=self.verify_command,
+            verify_cwd=self.verify_cwd,
             expected_artifacts=self.expected_artifacts,
             output_assertion=self.output_assertion,
         )
@@ -763,6 +804,8 @@ class AcceptanceCriterionSpec(BaseModel, frozen=True):
             data["semantic_ac_key"] = self.semantic_ac_key
         if self.verify_command:
             data["verify_command"] = self.verify_command
+        if self.verify_cwd:
+            data["verify_cwd"] = self.verify_cwd
         if self.expected_artifacts:
             data["expected_artifacts"] = list(self.expected_artifacts)
         if self.output_assertion:
@@ -795,6 +838,8 @@ def derive_semantic_ac_key(criterion: AcceptanceCriterionInput) -> str:
             "expected_artifacts": list(criterion.expected_artifacts),
             "output_assertion": criterion.output_assertion,
         }
+        if criterion.verify_cwd is not None:
+            payload["verify_cwd"] = criterion.verify_cwd
     else:
         payload = {"description": str(criterion).strip()}
     encoded = json.dumps(
@@ -843,15 +888,20 @@ class Seed(BaseModel, frozen=True):
             answer and its checked evidence quoted verbatim. They describe the
             current code and are never rewritten into constraints or criteria.
         open_questions: Interview questions nobody answered, verbatim and in
-            ledger order. They stay in the Seed file and the auto result so
-            the self-interview is visible, but no execution prompt renders them:
-            a worker shown a question with its candidate answers builds the fix
-            around one of them.
-        sourced_scope: The goal, constraints and criteria with a known source,
-            stamped by ``ooo auto`` from ledger provenance (see
-            :class:`SourcedScope`). When set, only it, ``requester_answers`` and
-            ``repo_facts`` reach the worker's execution prompt. ``None`` keeps
-            the historical rendering of every field.
+            ledger order: auto decided nothing for them (the code does not
+            settle the question, only the answerer's fixed template answered
+            it, or the requester gave no answer). They stay
+            in the Seed file and the auto result so the self-interview is
+            visible, but no execution prompt renders them: a worker shown a
+            question with its candidate answers builds the fix around one of
+            them. A question auto chose an answer for is not open; the answer
+            is in ``sourced_scope.assumptions``.
+        sourced_scope: The goal, constraints, criteria and auto's unconfirmed
+            interview answers with a known source, stamped by ``ooo auto`` from
+            ledger provenance (see :class:`SourcedScope`). When set, only it,
+            ``requester_answers`` and ``repo_facts`` reach the worker's
+            execution prompt. ``None`` keeps the historical rendering of every
+            field.
         ontology_schema: Conceptual lens for workflow coherence.
         evaluation_principles: Principles for evaluating outputs.
         exit_conditions: Conditions for terminating the workflow.
@@ -942,16 +992,23 @@ class Seed(BaseModel, frozen=True):
     open_questions: tuple[str, ...] = Field(
         default_factory=tuple,
         description=(
-            "Interview questions nobody answered, verbatim and in order; kept for the "
-            "record and never rendered into the worker's execution input"
+            "Interview questions nobody answered and auto decided nothing for, verbatim "
+            "and in order; kept for the record and never rendered into the worker's "
+            "execution input"
         ),
+    )
+    material_evidence_refs: tuple[MaterialEvidenceRef, ...] = Field(
+        default_factory=tuple,
+        max_length=10,
+        description="Non-authoritative local lookup handles, not facts or requirements",
     )
     sourced_scope: SourcedScope | None = Field(
         default=None,
         description=(
-            "The goal, constraints and criteria with a known source; when set, the "
-            "worker's execution prompt renders only these plus requester answers and "
-            "repo facts. None (every Seed not made by ooo auto) renders the Seed as before"
+            "The goal, constraints, criteria and auto's unconfirmed interview answers "
+            "with a known source; when set, the worker's execution prompt renders only "
+            "these plus requester answers and repo facts. None (every Seed not made by "
+            "ooo auto) renders the Seed as before"
         ),
     )
 
@@ -1091,6 +1148,13 @@ class Seed(BaseModel, frozen=True):
     @model_validator(mode="after")
     def _validate_plugin_extra_fields(self) -> Seed:
         """Keep plugin-owned extra fields safe for Seed persistence paths."""
+        if self.material_evidence_refs:
+            interview_id = self.metadata.interview_id
+            if not interview_id or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", interview_id) is None:
+                raise ValueError("Material evidence references require a valid local interview ID")
+            keys = {(ref.source_id, ref.evidence_id) for ref in self.material_evidence_refs}
+            if len(keys) != len(self.material_evidence_refs):
+                raise ValueError("Duplicate material evidence references")
         materialized_criteria = tuple(
             criterion.with_materialized_semantic_key()
             if isinstance(criterion, AcceptanceCriterionSpec)
@@ -1131,9 +1195,21 @@ class Seed(BaseModel, frozen=True):
             excluded.add("repo_facts")
         if not self.open_questions:
             excluded.add("open_questions")
+        if not self.material_evidence_refs:
+            excluded.add("material_evidence_refs")
+        exclude: dict[str, Any] = dict.fromkeys(excluded, True)
         if self.sourced_scope is None:
-            excluded.add("sourced_scope")
-        data = self.model_dump(mode="json", by_alias=True, exclude=excluded)
+            exclude["sourced_scope"] = True
+        else:
+            # Likewise a sourced scope without these optional lists serializes as before.
+            empty = {
+                name
+                for name in ("assumptions", "expected_experience", "expected_experience_sources")
+                if not getattr(self.sourced_scope, name)
+            }
+            if empty:
+                exclude["sourced_scope"] = empty
+        data = self.model_dump(mode="json", by_alias=True, exclude=exclude)
         data.update({key: _thaw_seed_extra_value(value) for key, value in extra.items()})
         return data
 

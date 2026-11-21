@@ -11,9 +11,11 @@ The MechanicalVerifier is stateless and produces immutable results.
 """
 
 import asyncio
+import contextlib
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import signal
 from typing import Any
 
 from ouroboros.core.errors import ValidationError
@@ -99,6 +101,51 @@ class CommandResult:
     executed_command: tuple[str, ...] | None = None
 
 
+# How long cleanup waits for a killed command to be reaped. asyncio resolves
+# ``Process.wait()`` only once every pipe the command was given has closed, so
+# a descendant that escaped the kill and still holds one would otherwise block
+# the caller forever.
+_KILL_REAP_SECONDS = 5.0
+
+
+def _running_on_windows() -> bool:
+    return os.name == "nt"
+
+
+def _spawn_kwargs() -> dict[str, Any]:
+    """Make a POSIX command the leader of its own session and process group.
+
+    A test runner can leave descendants behind, such as a server a test never
+    closed, that keep the stdout/stderr pipes open. As a group leader the
+    command and every such descendant can be signalled at once.
+    """
+    if _running_on_windows():
+        return {}
+    return {"start_new_session": True}
+
+
+async def _kill_and_reap(process: asyncio.subprocess.Process) -> None:
+    """Kill the command and its process group, then reap it within a bound."""
+    if _running_on_windows():
+        if process.returncode is None:
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+    else:
+        # Signal the group even when the command itself already exited: its
+        # descendants keep the group alive and may still hold the pipes.
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+    try:
+        await asyncio.wait_for(process.wait(), timeout=_KILL_REAP_SECONDS)
+    except TimeoutError:
+        # A descendant left the group and still holds a pipe. Make sure the
+        # command itself is dead, then stop waiting instead of hanging.
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(process.wait(), timeout=1.0)
+
+
 async def run_command(
     command: tuple[str, ...],
     timeout: int,
@@ -133,6 +180,7 @@ async def run_command(
             stderr=asyncio.subprocess.PIPE,
             cwd=working_dir,
             env=env,
+            **_spawn_kwargs(),
         )
 
         try:
@@ -147,8 +195,7 @@ async def run_command(
                 executed_command=prepared_command,
             )
         except TimeoutError:
-            process.kill()
-            await process.wait()
+            await _kill_and_reap(process)
             return CommandResult(
                 return_code=-1,
                 stdout="",
@@ -157,9 +204,7 @@ async def run_command(
                 executed_command=prepared_command,
             )
         except asyncio.CancelledError:
-            if process.returncode is None:
-                process.kill()
-                await process.wait()
+            await _kill_and_reap(process)
             raise
     except FileNotFoundError as e:
         return CommandResult(
@@ -188,6 +233,13 @@ def parse_coverage_from_output(output: str) -> float | None:
     """
     # Look for "TOTAL ... XX%" pattern
     import re
+    import unicodedata
+
+    # C1 control characters include the single-character CSI (U+009B).
+    # Do not interpret terminal control semantics when approving evidence.
+    # Check before splitlines, which itself consumes some C1 characters.
+    if any("\x80" <= char <= "\x9f" for char in output):
+        return None
 
     # Pattern matches lines like "TOTAL   1234   123  90%"
     pattern = r"[ \t]*TOTAL[ \t]+\d+[ \t]+\d+[ \t]+(\d+)%[ \t]*"
@@ -203,7 +255,123 @@ def parse_coverage_from_output(output: str) -> float | None:
     # even with missing/malformed separators, numbers or units. Alphabetic prose
     # remains nonmeasurement; only alt_pattern can grant a supported reading.
     candidate_pattern = r"[ \t]*Coverage[ \t]*(?:$|\d|[^\w\s]|(?i:nan|inf(?:inity)?|percent)\b)"
-    coverage_rows = [row for row in output.splitlines() if re.match(candidate_pattern, row)]
+    coverage_rows = [
+        row for row in output.splitlines() if re.match(candidate_pattern, row, re.IGNORECASE)
+    ]
+    # Go test appends its coverage figure to the package result line. This is
+    # not a supported measurement dialect, but it must not be ignored beside
+    # a different supported figure.
+    go_coverage = r"[ \t]*ok[ \t]+\S+[ \t]+\S+[ \t]+coverage:"
+    if any(re.match(go_coverage, row, re.IGNORECASE) for row in output.splitlines()):
+        return None
+    # Detect Jest's aggregate and Node's spec/TAP-prefixed coverage rows
+    # without interpreting their values as supported measurements.
+    jest_coverage = r"[ \t]*(?:[ℹ#][ \t]*)?All[ \t]+files[ \t]*\|"
+    # Tarpaulin reports a percentage before its line-count summary. It is
+    # not a supported dialect and must not be masked by a separate TOTAL.
+    tarpaulin_coverage = (
+        r"[ \t]*\d+(?:\.\d+)?%[ \t]+coverage[ \t]*,[ \t]*"
+        r"\d+[ \t]*/[ \t]*\d+[ \t]+lines[ \t]+covered\b"
+    )
+    # `coverage report --format=total` emits a bare number, optionally with
+    # decimal precision. It cannot safely be assigned to a report when mixed
+    # with another result; the same applies to a bare percentage.
+    bare_coverage = r"[ \t]*\d+(?:\.\d+)?%?[ \t]*"
+    # LCOV contains per-file records rather than a supported aggregate. Treat
+    # recognizable partial records as ambiguous too; their values need not be
+    # complete for a separate TOTAL to mask an unreadable report.
+    lcov = r"[ \t]*(?:(?:TN|SF|VER|FN|FNDA|FNF|FNH|BRDA|BRF|BRH|DA|LF|LH):.*|end_of_record)[ \t]*"
+    # Cobertura XML is not interpreted as a supported aggregate.
+    xml_coverage = r"<(?:[^\s<>/:]+:)?coverage(?:[ \t/>]|$)"
+
+    def detection_text(row: str) -> str:
+        # Remove decoration only for refusal detection, never positive proof.
+        uncolored = re.sub(r"\x1b\[[0-9;]{0,32}m", "", row)
+        return "".join(
+            char
+            for char in uncolored
+            if char in "\t\x1b"
+            or (unicodedata.category(char) not in {"Cc", "Cf"} and char != "\ufffd")
+        )
+
+    for row in output.splitlines():
+        uncolored = detection_text(row)
+        if uncolored != row and (
+            re.match(r"[ \t]*TOTAL\b", uncolored)
+            or re.match(candidate_pattern, uncolored, re.IGNORECASE)
+            or re.match(go_coverage, uncolored, re.IGNORECASE)
+            or uncolored.lstrip().startswith("{")
+        ):
+            return None
+        if (
+            re.match(jest_coverage, uncolored, re.IGNORECASE)
+            or re.match(tarpaulin_coverage, uncolored, re.IGNORECASE)
+            or re.fullmatch(bare_coverage, uncolored)
+            or re.fullmatch(lcov, uncolored)
+            or re.search(xml_coverage, uncolored, re.IGNORECASE)
+        ):
+            return None
+        # An unknown control sequence can conceal a measurement in any row,
+        # including a Go package result with no table separator. Do not guess
+        # at its terminal semantics when using output as approval evidence.
+        if "\x1b" in uncolored:
+            return None
+
+    # go test -json wraps the same text in line-delimited output events. Do
+    # not let an unrelated supported row stand in for a wrapped Go report.
+    import json
+
+    streams: dict[str, str] = {}
+    stream_size = 0
+    event_count = 0
+    for row in output.splitlines():
+        if not row.lstrip().startswith("{"):
+            continue
+        # Unparseable or oversized JSON-shaped output must not hide another
+        # coverage dialect beside a seemingly supported measurement.
+        if len(row) > 65536:
+            return None
+        try:
+            event = json.loads(row)
+        except (ValueError, TypeError, RecursionError):
+            return None
+        if not isinstance(event, dict) or event.get("Action") != "output":
+            continue
+        package = event.get("Package")
+        if not isinstance(package, str):
+            # An output event without a package cannot be safely joined to a
+            # stream; it may contain part of a conflicting measurement.
+            return None
+        text = event.get("Output")
+        if not isinstance(text, str):
+            return None
+        # JSON escapes can hide C1 controls until decoding.
+        if any("\x80" <= char <= "\x9f" for char in text):
+            return None
+        event_count += 1
+        stream_size += len(text)
+        if (
+            event_count > 256
+            or stream_size > 65536
+            or (package not in streams and len(streams) >= 64)
+        ):
+            return None
+        streams[package] = streams.get(package, "") + text
+        # Escapes can also conceal Cc/Cf or replacement characters until decoding.
+        if any(
+            "\x1b" in line
+            or re.match(r"[ \t]*TOTAL\b", line)
+            or re.match(candidate_pattern, line, re.IGNORECASE)
+            or re.match(go_coverage, line, re.IGNORECASE)
+            or re.match(jest_coverage, line, re.IGNORECASE)
+            or re.match(tarpaulin_coverage, line, re.IGNORECASE)
+            or re.fullmatch(bare_coverage, line)
+            or re.fullmatch(lcov, line)
+            or re.search(xml_coverage, line, re.IGNORECASE)
+            for row in streams[package].splitlines()
+            for line in (re.sub(r"\x1b\[[0-9;]{0,32}m", "", row), detection_text(row))
+        ):
+            return None
     matches = [re.fullmatch(pattern, row) for row in total_rows]
     matches += [re.fullmatch(alt_pattern, row) for row in coverage_rows]
     if not all(matches):
@@ -386,6 +554,13 @@ class MechanicalVerifier:
         # Extract coverage if this was a coverage check
         if check_type == CheckType.COVERAGE and passed:
             coverage = parse_coverage_from_output(cmd_result.stdout)
+            # Do not let a trusted-looking stdout row mask a conflicting or
+            # unreadable coverage report emitted on stderr. A stderr-only row
+            # does not become new positive evidence through this cross-check.
+            if coverage is not None and cmd_result.stderr:
+                combined = parse_coverage_from_output(cmd_result.stdout + "\n" + cmd_result.stderr)
+                if combined != coverage:
+                    coverage = None
             if coverage is None and self.config.coverage_threshold != 0.0:
                 # The exit code says the command ran, not that coverage met the
                 # threshold. Without a figure the threshold is undecided: not a

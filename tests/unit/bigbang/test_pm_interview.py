@@ -209,7 +209,7 @@ class TestPMSteeringPromptBudget:
         assert self._INNER_JOB_MARKER in prompt
         panel = engine.inner._build_perspective_panel_prompt(state)
         assert panel and panel in prompt
-        role_section = self._agent_prompt_section("## CRITICAL ROLE BOUNDARIES")
+        role_section = self._agent_prompt_section("## ROLE BOUNDARIES")
         if role_section in unwrapped:
             assert role_section in prompt
         self._assert_steering_paragraphs_atomic(prompt, cap)
@@ -225,7 +225,7 @@ class TestPMSteeringPromptBudget:
         return next(s for s in sections if s.strip().startswith(heading))
 
     def test_default_cap_keeps_interviewer_boundary_sections(self, tmp_path: Path) -> None:
-        """The base prompt's CRITICAL ROLE BOUNDARIES and CONTEXT BOUNDARIES
+        """The base prompt's ROLE BOUNDARIES and CONTEXT BOUNDARIES
         sections — retained completely by the unwrapped default-cap build —
         must survive the steered build completely alongside the contract."""
         engine = self._steered_engine(tmp_path)
@@ -234,7 +234,7 @@ class TestPMSteeringPromptBudget:
             initial_context="Build a task manager",
         )
         prompt = engine.inner._build_system_prompt(state)
-        assert self._agent_prompt_section("## CRITICAL ROLE BOUNDARIES") in prompt
+        assert self._agent_prompt_section("## ROLE BOUNDARIES") in prompt
         assert self._agent_prompt_section("## CONTEXT BOUNDARIES") in prompt
         flat = " ".join(prompt.split())
         assert "contract between the PM and the developers" in flat
@@ -2432,3 +2432,25 @@ async def test_an_abandoned_turns_reframe_does_not_attach_to_the_next_one(
     round_written = recorded.value.rounds[-1]
     assert round_written.question == shown
     assert "Original technical question" not in round_written.question
+
+
+def test_pm_build_system_prompt_accepts_language_calibration_kwarg() -> None:
+    """The PM steering wrapper must accept **kwargs for forward compatibility."""
+    import inspect
+
+    from ouroboros.bigbang.pm_interview import PMInterviewEngine
+    from ouroboros.providers.base import LLMAdapter
+
+    # Create a minimal PM engine to install steering
+    adapter = AsyncMock(spec=LLMAdapter)
+    engine = PMInterviewEngine.create(llm_adapter=adapter)
+    engine._install_pm_steering()
+
+    # The monkey-patched _build_system_prompt should accept language_calibration
+    sig = inspect.signature(engine.inner._build_system_prompt)
+    # Must have **kwargs or explicit language_calibration parameter
+    has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    has_explicit = "language_calibration" in sig.parameters
+    assert has_var_keyword or has_explicit, (
+        f"PM _build_system_prompt must accept language_calibration; params: {list(sig.parameters)}"
+    )

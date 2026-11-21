@@ -106,7 +106,7 @@ private SDK WebSocket. GJC's Broker and `SessionRouter` remain the sole owners
 of endpoint discovery, authentication, generation fencing, and turn delivery.
 
 The GJC adapter is an MCP v2 integration. Setup validates that the running
-Ouroboros interpreter has the pinned `mcp==2.2.0` client before it writes
+Ouroboros interpreter has the pinned `mcp==2.3.0` client before it writes
 `runtime_backend: gjc` or `llm.backend: gjc`. This profile must remain isolated
 from the Claude Agent SDK profiles, which retain their MCP 1.x dependency.
 
@@ -208,15 +208,27 @@ JSON extraction and validation rather than provider-native schema enforcement.
 
 ## Limitations
 
+- GJC workers may discover project MCP configuration such as `.mcp.json` and
+  start a nested Ouroboros server. Ouroboros does not currently have a verified
+  GJC option to suppress this discovery. Its child-environment depth guard can
+  limit nested launches when inherited; it does not prevent the first nested
+  server or guarantee that workers have stopped. Check your GJC project MCP
+  configuration before running workflows and avoid unwanted recursive entries.
 - GJC owns the active tool and permission policy. Ouroboros tool allow-lists and
   permission-mode overrides are reported as ignored rather than silently
   claiming enforcement.
 - LLM structured output remains prompt-enforced and validated after the turn;
   GJC does not expose a provider-native output-schema envelope through this SDK
   route.
-- Coordinator-created sessions and turn journals are durable. Cleanup failures
-  do not replace a completed result; the next Coordinator startup can reconcile
-  retained state through GJC's own lifecycle authority.
+- Coordinator-created sessions and turn journals are durable. Terminal session
+  cleanup retries a transient timeout, unavailable response, or pending deletion
+  once for the same session. If cleanup still fails, the result keeps its turn
+  outcome and sets `cleanup_unconfirmed: true`; a warning is logged. Confirmation
+  requires a `closed: true` response for the exact session; absent, malformed,
+  or mismatched responses and missing-session errors remain unconfirmed. Older
+  coordinator versions without that response shape have not been verified.
+  Question turns and coordinator errors remain
+  resumable and are not reclaimed by this terminal cleanup.
 
 ## Troubleshooting
 

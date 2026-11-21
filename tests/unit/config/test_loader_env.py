@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import re
@@ -143,6 +144,7 @@ def test_denylist_covers_known_execution_routing_keys() -> None:
         "OUROBOROS_POSTHOG_API_KEY",
         "OUROBOROS_POSTHOG_HOST",
         "OUROBOROS_FIRST_COMMAND_SURFACE",
+        "_OUROBOROS_TELEMETRY_SURFACE",
         "DO_NOT_TRACK",
         "CI",
         "GITHUB_ACTIONS",
@@ -553,7 +555,7 @@ def test_project_ci_cannot_deregister_local_users_from_the_counting_rule(
     tmp_path: Path,
 ) -> None:
     """The reviewer's exact probe: a project .env shipping CI=1 must not
-    stamp ci=true on a genuine local command_run event -- that would
+    stamp ci=true on a genuine local workflow_outcome event -- that would
     silently exclude the event from the published active-user rule
     (ci!=true). Spawned as a real subprocess so module-import-time
     _load_env_file() runs in its real order before telemetry ever
@@ -583,8 +585,12 @@ with patch.object(Path, "home", side_effect=lambda: home):
 
     captured = []
     telemetry._post = lambda batch: captured.extend(batch)
-    telemetry.capture_cli_command("run")
+    telemetry.capture(
+        "workflow_outcome",
+        {{"command": "run", "terminal_status": "completed", "verified": False}},
+    )
     telemetry.flush(timeout=2.0)
+    print(len(captured))
     props = captured[0]["properties"] if captured else {{}}
     print("ci" in props)
 """
@@ -611,7 +617,7 @@ with patch.object(Path, "home", side_effect=lambda: home):
         text=True,
     )
 
-    assert completed.stdout.splitlines() == ["<unset>", "False"]
+    assert completed.stdout.splitlines() == ["<unset>", "1", "False"]
 
 
 def test_untrusted_env_cannot_set_node_options(
@@ -852,6 +858,102 @@ def test_untrusted_env_cannot_redirect_backend_config_home(
     _load_env_file(env_file, trusted=False)
 
     assert key not in os.environ
+
+
+@pytest.mark.parametrize("consumer", ["runtime", "llm"])
+@pytest.mark.parametrize("trusted_source", [None, "process", "home"])
+def test_megacode_harness_home_child_env(
+    tmp_path: Path, consumer: str, trusted_source: str | None
+) -> None:
+    """Load a project's .env at startup, then observe a real harness child.
+
+    Only the harness executable is replaced with a local protocol fixture;
+    dotenv loading, adapter entry points and subprocess spawning are real.
+    """
+    project = tmp_path / "project"
+    project.mkdir()
+    home = tmp_path / "home"
+    home.mkdir()
+    evil_root = project / "evil-harness"
+    (project / ".env").write_text(f"HARNESS_HOME={evil_root}\n", encoding="utf-8")
+    trusted_root = tmp_path / "operator-harness"
+    observation = tmp_path / "child.json"
+    harness = tmp_path / "harness"
+    harness.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, pathlib, sys\n"
+        "prompt = sys.stdin.read()\n"
+        f"pathlib.Path({str(observation)!r}).write_text(json.dumps({{\n"
+        "    'harness_home': os.environ.get('HARNESS_HOME'),\n"
+        "    'pid': os.getpid(), 'parent_pid': os.getppid(),\n"
+        "    'argv': sys.argv, 'prompt': prompt,\n"
+        "}))\n"
+        "print(json.dumps({'type': 'result', 'v': 1, 'session_id': 'local-test',\n"
+        "    'outcome': 'completed', 'is_error': False, 'result': 'local answer'}))\n",
+        encoding="utf-8",
+    )
+    harness.chmod(0o700)
+    environment = {
+        key: value
+        for key, value in os.environ.items()
+        if not key.startswith("OUROBOROS_")
+        and key not in {"HARNESS_HOME", "CODEX_HOME", "_OUROBOROS_NESTED"}
+    }
+    environment["HOME"] = str(home)
+    environment["PYTHONPATH"] = str(Path(__file__).resolve().parents[3] / "src")
+    environment["DO_NOT_TRACK"] = "1"
+    if trusted_source == "process":
+        environment["HARNESS_HOME"] = str(trusted_root)
+    elif trusted_source == "home":
+        (home / ".ouroboros").mkdir()
+        (home / ".ouroboros" / ".env").write_text(
+            f"HARNESS_HOME={trusted_root}\n", encoding="utf-8"
+        )
+    script = """
+import asyncio
+import os
+import sys
+import ouroboros.config.loader
+from ouroboros.orchestrator.megacode_runtime import MegacodeRuntime
+from ouroboros.providers.megacode_llm_adapter import MegacodeLLMAdapter
+from ouroboros.providers.base import CompletionConfig, Message, MessageRole
+
+async def main():
+    if sys.argv[1] == "runtime":
+        runtime = MegacodeRuntime(cli_path=sys.argv[2], cwd=os.getcwd())
+        result = await runtime.execute_task_to_result("local probe")
+        assert result.is_ok, result
+        assert result.value.final_message == "local answer"
+    else:
+        adapter = MegacodeLLMAdapter(cli_path=sys.argv[2], cwd=os.getcwd(), max_retries=1)
+        result = await adapter.complete(
+            [Message(role=MessageRole.USER, content="local probe")],
+            CompletionConfig(model="default"),
+        )
+        assert result.is_ok, result
+        assert result.value.content == "local answer"
+
+asyncio.run(main())
+print(f"probe-parent-pid={os.getpid()}")
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script, consumer, str(harness)],
+        cwd=project,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    child = json.loads(observation.read_text(encoding="utf-8"))
+    assert f"probe-parent-pid={child['parent_pid']}" in completed.stdout
+    assert child["pid"] != child["parent_pid"]
+    assert child["argv"][0] == str(harness)
+    mode = "ouroboros-worker" if consumer == "runtime" else "ouroboros-llm"
+    assert child["argv"][child["argv"].index("--mode") + 1] == mode
+    assert "local probe" in child["prompt"]
+    expected_root = str(trusted_root) if trusted_source else None
+    assert child["harness_home"] == expected_root
 
 
 @pytest.mark.parametrize(

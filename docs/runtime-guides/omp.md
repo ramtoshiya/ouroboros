@@ -1,5 +1,10 @@
 # OMP CLI Runtime
 
+LLM completion usage is summed from assistant messages in the final per-run
+`agent_end` snapshot. Earlier message/turn completion events repeat these
+messages and are not counted again. Additive cache tokens are preserved as
+`unallocated_tokens`; cache-retention and reasoning breakdowns are not added twice.
+
 Run Ouroboros workflow execution on top of the locally installed OMP ("Oh My
 Pi", the `omp` binary) CLI.
 
@@ -207,7 +212,7 @@ session can continue handling the input.
 
 | Command shape | What completes | OMP involvement |
 |---------------|----------------|-----------------|
-| `ouroboros auto --runtime omp ...` | Interview, Seed generation, Seed QA, and run handoff | Starts an execution handoff for the OMP runtime; the final product may still be pending |
+| `ouroboros auto --runtime omp ...` | Interview, Seed generation, and run handoff | Starts an execution handoff for the OMP runtime; the final product may still be pending |
 
 OMP model selection comes from OMP's own configured model roles unless the
 execution path passes a model override. With an override, the OMP runtime
@@ -317,3 +322,7 @@ first scheduled ACs, attention, and terminal assurance. The main session stays
 available and selects the relevant AC semantically rather than asking the user
 for IDs. English is the canonical instruction language; the host renders the UX
 naturally in the current conversation language.
+
+After native completion or stdout EOF, the runtime gives the worker five seconds
+to exit and close stderr. If that exit phase stalls, it terminates the worker
+and returns a `TimeoutError`; active stdout startup and idle budgets are unchanged.

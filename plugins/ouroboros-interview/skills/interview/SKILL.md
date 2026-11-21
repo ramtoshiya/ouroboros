@@ -34,6 +34,7 @@ A fact is not a decision. Existing JWT authentication does not mean a new featur
 4. Preserve the user's reasoning, constraints, and exclusions in the conversation ledger. Reflect a material interpretation back when it could have changed their meaning. Ask for correction when needed, rather than requiring a second approval for every answer.
 5. Verify facts yourself and state their source. Ask the user about conflicting evidence or missing human judgment, not merely to confirm something you can read. Keep proposed defaults visible as assumptions, not user decisions.
 6. Keep the independent tracks visible in a short progress recap when it helps. After several turns on one topic, check what remains unresolved elsewhere. If the goal changes, revisit conclusions that depended on the old goal.
+7. If the user says they do not know a word or asks what a term means while a question is pending, treat that as a request for help, not as the answer. Explain the term at the level they need, rephrase the same question without steering the decision, and wait for their actual answer. Do not infer low general ability from an unknown term, a typo, or a terse answer.
 
 Do not invent numeric ambiguity scores. Name the actual gaps and explain which ones would change the result. Do not treat a terse answer as approval of assumptions it did not address.
 

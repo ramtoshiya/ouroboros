@@ -443,18 +443,67 @@ def _discover_spawn_sites(root: Path) -> tuple[SpawnSite, ...]:
 #: "parameter" = env passed in by the caller. A justification must name why
 #: inheriting is acceptable so the allowlist never silently absorbs a finding.
 SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
+    # Ouroboros console (`ouroboros gui`): every child is a code-owned argv run on
+    # the user's behalf from the local console, so it needs the user's PATH/HOME
+    # and agent logins exactly as a terminal invocation would.
+    ("src/ouroboros/gui/clients.py", "_run_quiet", "subprocess.run", 402, 15): (
+        "implicit inherit; `claude auth status` / `codex login status` read-only probes."
+    ),
+    ("src/ouroboros/gui/daemon.py", "count_stdio_servers", "subprocess.run", 248, 14): (
+        "implicit inherit; read-only `ps -eo command` process count."
+    ),
+    ("src/ouroboros/gui/daemon.py", "SharedMcp._supervise", "subprocess.Popen", 178, 27): (
+        "os.environ + NO_COLOR; the shared `ouroboros mcp serve` must see the same "
+        "config and agent logins as a host-launched stdio server."
+    ),
+    ("src/ouroboros/gui/harness.py", "_run_result", "subprocess.run", 1586, 18): (
+        "implicit inherit; read-only `git worktree list`."
+    ),
+    ("src/ouroboros/gui/harness.py", "_run_result.git", "subprocess.run", 1607, 19): (
+        "implicit inherit; read-only `git diff --name-only` / `git status`."
+    ),
+    ("src/ouroboros/gui/workspace.py", "_git", "subprocess.run", 51, 11): (
+        "implicit inherit, stdin closed; read-only `git rev-parse` / `config --get` / "
+        "`status` checks, and, when the user clicks the hand-off offer, `git init` plus one "
+        "empty `git commit` in the chat's own project folder."
+    ),
+    ("src/ouroboros/gui/jobs.py", "JobRegistry._run", "subprocess.Popen", 162, 19): (
+        "_child_env = os.environ + plain-text output vars + the console telemetry "
+        "surface marker; runs `ouroboros setup|auto` or a fixed vendor installer the "
+        "user confirmed in the console."
+    ),
+    ("src/ouroboros/gui/launcher.py", "serve", "os.execv", 152, 8): (
+        "implicit inherit; re-execs this same console (restart after installing a component)."
+    ),
+    ("src/ouroboros/gui/service.py", "_run", "subprocess.run", 72, 15): (
+        "implicit inherit; fixed `launchctl` / `systemctl --user` calls."
+    ),
+    (
+        "src/ouroboros/copilot/acp_client.py",
+        "CopilotAcpClient.__aenter__",
+        "asyncio.create_subprocess_exec",
+        99,
+        12,
+    ): "Required explicit env parameter; production CopilotAcpRuntime supplies inherited _build_child_env -> build_copilot_child_env, stripping runtime selectors and enforcing recursion depth. Client never implicitly inherits os.environ.",
     (
         "src/ouroboros/auto/checkpoint_commits.py",
         "_staged_changes",
         "subprocess.run",
-        154,
+        159,
         13,
     ): "implicit inherit; `git diff --cached`. GIT_* is denied from the untrusted .env by the loader.",
     (
         "src/ouroboros/auto/checkpoint_commits.py",
+        "_git_path_bytes",
+        "subprocess.run",
+        187,
+        13,
+    ): "implicit inherit; `git status --porcelain -z` path listing. GIT_* is denied from the untrusted .env by the loader.",
+    (
+        "src/ouroboros/auto/checkpoint_commits.py",
         "_git",
         "subprocess.run",
-        173,
+        207,
         13,
     ): "implicit inherit; `git add/commit`. GIT_* is denied from the untrusted .env by the loader.",
     (
@@ -472,17 +521,10 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         28,
     ): "Requester argv is explicitly operator-selected; OUROBOROS_AUTO_REQUESTER_COMMAND is denied from project .env; no shell.",
     (
-        "src/ouroboros/auto/seed_preflight_repair.py",
-        "_git_listed_files",
-        "subprocess.run",
-        108,
-        20,
-    ): "Fixed git ls-files roster; GIT_* and PATH denied from project .env.",
-    (
         "src/ouroboros/backends/model_catalog.py",
         "refresh_models",
         "subprocess.run",
-        356,
+        369,
         21,
     ): "implicit inherit; `<cli> <list-args>` model listing with table-driven argv.",
     (
@@ -517,28 +559,35 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         "src/ouroboros/cli/commands/codex.py",
         "_list_stdio_mcp_tool_names_with_framing",
         "asyncio.create_subprocess_exec",
-        962,
+        982,
         17,
     ): "os.environ.copy()+server env from $CODEX_HOME/config.toml (denied root); doctor probe.",
+    (
+        "src/ouroboros/cli/commands/megacode_setup.py",
+        "resolve_harness_config_dir",
+        "subprocess.run",
+        82,
+        20,
+    ): "Shared Megacode resolver validates absolute executable before literal paths argv; real-child rejection/acceptance proof in test_megacode_cli.py; loader controls denied from project .env, bounded by 15s.",
     (
         "src/ouroboros/cli/commands/mcp.py",
         "_ps_value",
         "subprocess.run",
-        457,
+        458,
         17,
     ): "implicit inherit; `ps -p <pid> -o <literal column>=` (start time / ppid).",
     (
         "src/ouroboros/cli/commands/mcp.py",
         "_ensure_shell_env",
         "subprocess.run",
-        397,
+        398,
         21,
     ): "implicit inherit; spawns `$SHELL -l -c` to dump the login environment. SHELL and ZDOTDIR are denied from the untrusted .env (PR #2404), so argv[0] and the zsh startup file come from the real environment.",
     (
         "src/ouroboros/cli/commands/mcp_doctor.py",
         "_pid_is_alive",
         "subprocess.run",
-        697,
+        710,
         25,
     ): "implicit inherit; Windows `tasklist /FI` liveness probe.",
     (
@@ -566,14 +615,14 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         "src/ouroboros/cli/commands/update.py",
         "_run_step",
         "subprocess.run",
-        660,
+        661,
         17,
     ): "Operator-triggered install/plugin refresh uses code-owned argv without shell; inherits operator env or merges installer/topology overrides (UV_TOOL_DIR/PIPX_HOME/UV_TOOL_BIN_DIR). Project .env denies PATH and package-manager/config-loader controls; timeout defaults to 600s and errors/nonzero return False.",
     (
         "src/ouroboros/cli/commands/update.py",
         "_installed_version",
         "subprocess.run",
-        920,
+        921,
         17,
     ): "Operator installation identity selects the console path with literal --version, no shell; inherits operator env after project .env executable/loader controls are denied. 30s timeout; spawn/nonzero/parse failure returns None.",
     (
@@ -594,7 +643,7 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         "src/ouroboros/cli/opencode_config.py",
         "_debug_paths_config_dir",
         "subprocess.run",
-        91,
+        107,
         17,
     ): "Operator configuration resolves the OpenCode executable; literal debug paths argv and no shell. Inherits operator profile/config after project .env PATH, OPENCODE_CONFIG(_DIR), HOME and loader controls are denied. 5s timeout; unavailable/nonzero/unparseable config returns None for deterministic fallback.",
     (
@@ -608,7 +657,7 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         "src/ouroboros/config_tui/launcher.py",
         "_relaunch_with_tui_profile",
         "os.execvpe",
-        70,
+        65,
         4,
     ): "os.environ.copy()+bootstrap marker; `uvx --isolated` relaunch of ourselves. XDG_DATA_HOME (uv resolution) is an open question in THREAT_MODEL.md.",
     (
@@ -636,14 +685,14 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         "src/ouroboros/core/worktree.py",
         "_run_git_process",
         "subprocess.run",
-        133,
+        128,
         15,
     ): "implicit inherit; `git worktree add/remove/status`. GIT_* is denied from the untrusted .env by the loader.",
     (
         "src/ouroboros/core/worktree.py",
         "_run_git_bytes",
         "subprocess.run",
-        162,
+        157,
         17,
     ): "implicit inherit; git plumbing with bytes output. GIT_* is denied from the untrusted .env by the loader.",
     (
@@ -657,7 +706,7 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         "src/ouroboros/evaluation/mechanical.py",
         "run_command",
         "asyncio.create_subprocess_exec",
-        130,
+        177,
         24,
     ): "os.environ.copy() minus _OUROBOROS_NESTED; runs .ouroboros/mechanical.toml commands; the repo already controls the command text, so env from the same repo adds no capability. Not routed through sanitized_verify_environment.",
     (
@@ -668,10 +717,17 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         16,
     ): "implicit inherit; `git -C <path> status --porcelain`.",
     (
+        "src/ouroboros/examples/probe_wrapper.py",
+        "_command",
+        "subprocess.Popen",
+        244,
+        18,
+    ): "Runs inside the confined probe process (check_env.check_command); the inherited environment is the sandbox's allowlisted check environment, never the controller's; no shell.",
+    (
         "src/ouroboros/mcp/detached_jobs.py",
         "_spawn_worker",
         "subprocess.Popen",
-        298,
+        342,
         14,
     ): "os.environ.copy()+marker via **kwargs; fixed `sys.executable -m` argv. PYTHON* keys are denied from the untrusted .env by the loader.",
     (
@@ -708,7 +764,7 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         "subprocess.run",
         129,
         21,
-    ): "implicit inherit; `ps -p <pid> -o lstart=`.",
+    ): "os.environ copy with only LC_ALL=C added, so `ps -p <pid> -o lstart=` prints the C-locale date its strptime parses; literal argv, no shell; 3s timeout; failure returns None.",
     (
         "src/ouroboros/orchestrator/n_version_tournament.py",
         "RunWorktreeManager._git",
@@ -769,7 +825,7 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         "src/ouroboros/orchestrator/verify_command_runner.py",
         "_run_process",
         "asyncio.create_subprocess_exec",
-        222,
+        238,
         21,
     ): "parameter passthrough `dict(env)`; every caller passes sanitized_verify_environment() (verify_shell, leaf_dispatcher, parallel_executor).",
     (
@@ -804,7 +860,7 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         "src/ouroboros/providers/litellm_adapter.py",
         "LiteLLMAdapter._run_isolated_completion",
         "asyncio.create_subprocess_exec",
-        988,
+        990,
         28,
     ): "explicit two-key literal env (PYTHONIOENCODING/PYTHONUTF8) and `-I`; reference pattern.",
     (
@@ -825,14 +881,14 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         "src/ouroboros/runtime/exec_sandbox.py",
         "_unshare_prefix",
         "subprocess.run",
-        814,
+        826,
         17,
     ): "Sandbox capability probe uses fixed _bootstrap_environment (os.defpath plus serialized command environment), not inherited loaders.",
     (
         "src/ouroboros/runtime/exec_sandbox.py",
         "_private_mounts_unshare",
         "subprocess.run",
-        882,
+        894,
         17,
     ): "Sandbox capability probe uses fixed _bootstrap_environment (os.defpath plus serialized command environment), not inherited loaders.",
     (
@@ -888,9 +944,9 @@ SPAWN_SITE_ALLOWLIST: dict[tuple[str, str, str, int, int], str] = {
         "src/ouroboros/cli/opencode_config.py",
         "plugin_version_error",
         "subprocess.run",
-        22,
+        33,
         17,
-    ): "Operator/config-selected OpenCode CLI with literal --version, no shell; inherits trusted operator profile after project .env PATH, OpenCode config and loader controls are denied. 5s timeout; unavailable/nonzero/unparseable version returns None (no compatibility diagnosis), never authorizes a security action.",
+    ): "Operator/config-selected OpenCode CLI with literal --version, no shell; inherits trusted operator profile after project .env PATH, OpenCode config and loader controls are denied. 5s timeout; unavailable/nonzero/unparseable version returns None and warns that compatibility is unknown, never authorizes a security action.",
 }
 
 
@@ -1156,6 +1212,7 @@ LOADER_KEY_CATALOG_DENIED: tuple[str, ...] = (
     "HOMEPATH",
     "XDG_CONFIG_HOME",
     "CODEX_HOME",
+    "HARNESS_HOME",
     "OPENCODE_CONFIG",
     "OPENCODE_CONFIG_DIR",
     "OUROBOROS_VERIFY_BASH",
@@ -1213,6 +1270,7 @@ LOADER_KEY_CATALOG_DENIED: tuple[str, ...] = (
     "OUROBOROS_AGENT_RUNTIME",
     "OUROBOROS_ANTIGRAVITY_CLI_PATH",
     "OUROBOROS_ASSERTION_EXTRACTION_MODEL",
+    "OUROBOROS_AUTO_EXPECTATIONS_TIMEOUT",
     "OUROBOROS_AUTO_INVESTIGATOR_CALL_TIMEOUT_SECONDS",
     "OUROBOROS_AUTO_INVESTIGATOR_MAX_CALLS",
     "OUROBOROS_AUTO_REQUESTER_COMMAND",
@@ -1225,7 +1283,9 @@ LOADER_KEY_CATALOG_DENIED: tuple[str, ...] = (
     "OUROBOROS_CONSENSUS_JUDGE_MODEL",
     "OUROBOROS_CONSENSUS_MODELS",
     "OUROBOROS_CONTEXT_COMPRESSION_MODEL",
+    "OUROBOROS_COPILOT_ACP_FALLBACK",
     "OUROBOROS_COPILOT_CLI_PATH",
+    "OUROBOROS_COPILOT_TRANSPORT",
     "OUROBOROS_CROSS_HARNESS_REDISPATCH",
     "OUROBOROS_DEPENDENCY_ANALYSIS_MODEL",
     "OUROBOROS_DETECTOR_MODEL",
@@ -1235,6 +1295,7 @@ LOADER_KEY_CATALOG_DENIED: tuple[str, ...] = (
     "OUROBOROS_EXECUTION_MODEL",
     "OUROBOROS_EXEC_SANDBOX",
     "OUROBOROS_FIRST_COMMAND_SURFACE",
+    "_OUROBOROS_TELEMETRY_SURFACE",
     "OUROBOROS_GEMINI_CLI_PATH",
     "OUROBOROS_GJC_CLI_PATH",
     "OUROBOROS_GOOSE_CLI_PATH",
@@ -1243,6 +1304,7 @@ LOADER_KEY_CATALOG_DENIED: tuple[str, ...] = (
     "OUROBOROS_KIRO_CLI_PATH",
     "OUROBOROS_LLM_BACKEND",
     "OUROBOROS_LLM_PERMISSION_MODE",
+    "OUROBOROS_MEGACODE_CLI_PATH",
     "OUROBOROS_MODEL",
     "OUROBOROS_MODEL_TIER_ROUTING",
     "OUROBOROS_OMP_CLI_PATH",

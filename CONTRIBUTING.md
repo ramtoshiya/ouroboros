@@ -621,6 +621,8 @@ class ExecutionStrategy(Protocol):
 
 This section defines **which documentation files must be updated when a specific source file or code path changes**. Reviewers should verify that all relevant doc files are updated before merging any PR that touches the listed source paths.
 
+The mapping itself lives in one place, [`docs/doc-map.yml`](./docs/doc-map.yml): each entry lists source globs, the docs that describe them, and what to check. On every pull request the advisory `doc-impact (advisory)` job lists the mapped docs whose sources changed while the docs did not; it never blocks a merge (see [CI Gates](./docs/contributing/ci-gates.md#doc-impact-advisory-doc-impactyml)). Reproduce it locally with `uv run python3 scripts/check-doc-impact.py --base origin/main`, and check the map with `--validate`. Change the map in the same PR that adds, moves, or removes a mapped source or doc.
+
 ### Source of Truth
 
 The authoritative implementation directories are:
@@ -635,106 +637,16 @@ The authoritative implementation directories are:
 
 ### CLI Commands → Doc Mapping
 
-Any change to a file under `src/ouroboros/cli/commands/` requires reviewing and updating the corresponding documentation:
-
-#### `init.py` — `ouroboros init` / `ouroboros init start`
-
-Flags covered: `--resume`, `--state-dir`, `--orchestrator`, `--runtime`, `--llm-backend`, `--debug`
-
-**Must update:**
-- `docs/cli-reference.md` — `init` command section (flags, examples)
-- `docs/getting-started.md` — interview workflow description
-- `docs/getting-started.md` — introductory `ooo init` / `ouroboros init` examples
-- `docs/getting-started.md` — onboarding flow
-
-**Also check:**
-- `docs/runtime-guides/claude-code.md` and `docs/runtime-guides/codex.md` — if `--orchestrator` or `--runtime` behavior changes
-
-#### `run.py` — `ouroboros run workflow`
-
-Flags covered: `--orchestrator/--no-orchestrator`, `--resume`, `--mcp-config`, `--mcp-tool-prefix`, `--dry-run`, `--debug`, `--sequential`, `--runtime`, `--no-qa`
-
-**Must update:**
-- `docs/cli-reference.md` — `run` command section (flags, examples, defaults)
-- `docs/getting-started.md` — execution workflow description
-- `docs/getting-started.md` — `ooo run` / `ouroboros run` examples
-
-**Also check:**
-- `docs/runtime-guides/claude-code.md` and `docs/runtime-guides/codex.md` — if `--runtime` semantics change
-- `docs/runtime-capability-matrix.md` — if a runtime backend is added or removed
-
-#### `config.py` — `ouroboros config`
-
-Subcommands: `show`, `backend`, `init`, `set`, `validate`
-
-`config` subcommands are implemented command surfaces. Keep their behavior aligned with the authoritative [`docs/cli-reference.md`](./docs/cli-reference.md) `config` section.
-
-**Must update:**
-- `docs/cli-reference.md` — `config` command section
-- `docs/getting-started.md` — configuration management section
-
-#### `status.py` — `ouroboros status`
-
-Implemented subcommands: `auto`, `run`
-
-Placeholder subcommands on `main`: `executions`, `execution`, `health`
-
-> **Note**: Only the placeholder subcommands listed above should be marked `[Placeholder — not yet implemented]` in docs until real persistence or health-check behavior is wired in. Do not mark implemented `status` subcommands as placeholders.
-
-**Must update:**
-- `docs/cli-reference.md` — `status` command section
-
-#### `mcp.py` — `ouroboros mcp`
-
-**Must update:**
-- `docs/cli-reference.md` — `mcp` command section
-- `docs/api/mcp.md` — MCP server/client configuration
-
-#### `setup.py` — `ouroboros setup`
-
-**Must update:**
-- `docs/cli-reference.md` — `setup` command section
-- `docs/getting-started.md` — setup step in onboarding
-
-#### `tui.py` — `ouroboros tui`
-
-**Must update:**
-- `docs/cli-reference.md` — `tui` command section
-- `docs/guides/tui-usage.md` — TUI usage guide
-
-#### `cancel.py` — `ouroboros cancel`
-
-**Must update:**
-- `docs/cli-reference.md` — `cancel` command section
+Which docs describe each file under `src/ouroboros/cli/commands/`, and what to
+check in them, is recorded in [`docs/doc-map.yml`](./docs/doc-map.yml).
 
 ---
 
 ### Orchestrator → Doc Mapping
 
-Changes under `src/ouroboros/orchestrator/` affect runtime behavior documentation:
-
-| Source file | Must update |
-|-------------|-------------|
-| `runtime_factory.py` | `docs/runtime-capability-matrix.md`, `docs/runtime-guides/claude-code.md`, `docs/runtime-guides/codex.md` — if a backend is added, removed, or changes its `NotImplementedError` status |
-| `adapter.py` (`ClaudeAgentAdapter`) | `docs/runtime-guides/claude-code.md` — permission modes, session flow |
-| `codex_cli_runtime.py` (`CodexCliRuntime`) | `docs/runtime-guides/codex.md` — permission modes, `--runtime codex` behavior |
-| `opencode_runtime.py` (`OpenCodeRuntime`) | `docs/runtime-capability-matrix.md`, `docs/runtime-guides/opencode.md` — permission modes, `--runtime opencode` behavior |
-| `runner.py` (`OrchestratorRunner`) | `docs/architecture.md` — orchestration lifecycle; `docs/getting-started.md` — session ID output, resume flow |
-| `runner_factory.py` | `docs/architecture.md` — shared runner assembly for CLI, MCP, and evolution |
-| `cancellation.py` (`CancellationLifecycle`) | `docs/architecture.md` — cancellation lifecycle and runner delegation |
-| `project_anchor.py` (`ProjectAnchor`) | `docs/architecture.md` — project/workspace identity, proof and legacy representations, and resolver error ownership; `docs/getting-started.md` — resume workspace identity compatibility |
-| `parallel_executor.py` | `docs/cli-reference.md` — `--sequential` flag behavior; `docs/architecture.md` — parallel execution strategy |
-| `coordinator.py` (`LevelCoordinator`) | `docs/architecture.md` — inter-level conflict resolution and coordinator review gate |
-| `session.py` | `docs/cli-reference.md` — session ID format, resume semantics |
-| `workflow_state.py` | `docs/architecture.md` — AC state machine, `ActivityType` values; `docs/guides/tui-usage.md` — if activity display changes |
-| `dependency_analyzer.py` | `docs/architecture.md` — dependency level computation description |
-| `execution_strategy.py` | `docs/architecture.md` — execution strategy types (`code`, `research`, `analysis`); `docs/guides/seed-authoring.md` if strategy selection is user-facing |
-| `mcp_config.py` / `mcp_tools.py` | `docs/api/mcp.md` — MCP config YAML schema |
-| `command_dispatcher.py` | `docs/architecture.md` — command dispatch model |
-| `level_context.py` | `docs/architecture.md` — level context description |
-| `evidence/command_replay.py` | `docs/contributing/verifier-evidence-policy.md`: replay selection, isolation, output-filter pipelines, claim linkage and the denylist |
-| `evidence/replay_policy.py` | `docs/contributing/verifier-evidence-policy.md`: the replay allowlist, wrapper and launcher resolution, test-target linkage and configuration narrowing |
-| `runtime/exec_sandbox.py`, `runtime/_confine_exec.py`, `runtime/_sandbox_probe.py` | The `exec_sandbox` module docstring is the contract (writable roots, metadata, network, environment, backends, probe, unavailable reasons); callers document their use of it (verifier replay: `docs/contributing/verifier-evidence-policy.md`) |
+The docs for each source under `src/ouroboros/orchestrator/`, and for the
+execution sandbox under `src/ouroboros/runtime/`, are recorded in
+[`docs/doc-map.yml`](./docs/doc-map.yml).
 
 **Runtime availability rule**: If `create_agent_runtime()` raises `NotImplementedError` for a backend, that backend **must not** appear in docs as a working option. Runtime backend availability is registry-owned; when `runtime_backend_choices()` or setup support changes, update the runtime capability matrix, setup docs, and per-runtime guide/gap documentation together.
 
@@ -743,14 +655,8 @@ Changes under `src/ouroboros/orchestrator/` affect runtime behavior documentatio
 ### Capability Graph → Doc Mapping
 
 Changes that add, remove, rename, or reinterpret a skill execution capability
-must keep the capability graph and generated runtime instructions in sync.
-
-| Source path | Must update |
-|-------------|-------------|
-| `skills/*/SKILL.md` | `docs/runtime-guides/skill-capability-guides.md` if `required_capabilities` changes or the skill depends on a new abstract runtime action |
-| `src/ouroboros/backends/capabilities.py` | `docs/runtime-guides/skill-capability-guides.md`; renderer/package snapshot tests for Codex, Hermes, Claude, and setup-owned runtime artifacts |
-| `src/ouroboros/runtime_instruction_artifacts.py` | `docs/runtime-guides/skill-capability-guides.md`; `docs/cli-reference.md` setup section if install paths or managed surfaces change |
-| Packaged guide snapshots such as `.claude-plugin/SKILL_CAPABILITY_GUIDE.md` | Update when `render_backend_skill_capability_guide(<backend>)` output changes |
+must keep the capability graph and generated runtime instructions in sync. The
+docs and packaged snapshots to update are recorded in [`docs/doc-map.yml`](./docs/doc-map.yml).
 
 Before submitting a capability graph PR, run the checklist in
 [`docs/runtime-guides/skill-capability-guides.md`](./docs/runtime-guides/skill-capability-guides.md#contributor-checklist-for-capability-changes).
@@ -759,56 +665,22 @@ Before submitting a capability graph PR, run the checklist in
 
 ### Configuration → Doc Mapping
 
-Changes under `src/ouroboros/config/` affect configuration reference documentation:
-
-| Source class | Config key path | Must update |
-|---|---|---|
-| `OrchestratorConfig` | `orchestrator.*` | `docs/cli-reference.md` — `--runtime` flag; `README.md` config snippet |
-| `LLMConfig` | `llm.*` | `docs/architecture.md`, `docs/api/core.md` — model defaults |
-| `EconomicsConfig` / `TierConfig` | `economics.*` | `docs/architecture.md` — tier descriptions |
-| `ClarificationConfig` | `clarification.*` | `docs/guides/seed-authoring.md` — ambiguity threshold |
-| `ExecutionConfig` | `execution.*` | `docs/architecture.md` — iteration limits |
-| `ResilienceConfig` | `resilience.*` | `docs/architecture.md` — stagnation/lateral thinking |
-| `EvaluationConfig` | `evaluation.*` | `docs/architecture.md` — three-stage evaluation |
-| `ConsensusConfig` | `consensus.*` | `docs/architecture.md` — Stage 3 consensus |
-| `DriftConfig` | `drift.*` | `docs/architecture.md` — drift monitoring thresholds |
-| `PersistenceConfig` | `persistence.*` | `docs/getting-started.md` — database path |
-
-When a **new config key** is added to any model class, check `README.md` and `docs/getting-started.md` for any sample `config.yaml` snippets that may need updating.
-
-**`config/loader.py`**: If the config file search path, environment variable names (e.g., `OUROBOROS_CONFIG`), or YAML loading logic change, update:
-- `docs/getting-started.md` — config file location instructions
-- `docs/config-reference.md` — environment variable overrides section
-- `README.md` — any config bootstrap snippet
+The docs for each config section in `src/ouroboros/config/models.py`, and for
+`src/ouroboros/config/loader.py`, are recorded in [`docs/doc-map.yml`](./docs/doc-map.yml).
 
 ---
 
 ### Evaluation Pipeline → Doc Mapping
 
-Changes under `src/ouroboros/evaluation/` affect:
-
-| Source file | Must update |
-|-------------|-------------|
-| `pipeline.py` | `docs/architecture.md` — Stage descriptions (Stage 1 Mechanical, Stage 2 Semantic, Stage 3 Consensus); `docs/guides/evaluation-pipeline.md` |
-| `trigger.py` | `docs/architecture.md` — consensus trigger thresholds; `docs/guides/evaluation-pipeline.md` — when Stage 3 is invoked |
-| `mechanical.py` | `docs/guides/evaluation-pipeline.md` — Stage 1 check list |
-| `models.py` | `docs/api/core.md` — evaluation result types |
-| `artifact_collector.py` | `docs/architecture.md` — artifact collection description |
+The docs for each source under `src/ouroboros/evaluation/` are recorded in
+[`docs/doc-map.yml`](./docs/doc-map.yml).
 
 ---
 
 ### TUI Source → Doc Mapping
 
-Changes under `src/ouroboros/tui/` that alter the visible interface or user interactions affect:
-
-| Source path | Must update |
-|-------------|-------------|
-| `screens/dashboard_v3.py` | `docs/guides/tui-usage.md` — dashboard layout, key bindings |
-| `widgets/ac_tree.py` | `docs/guides/tui-usage.md` — AC tree display; `docs/architecture.md` if AC state rendering changes |
-| `widgets/drift_meter.py` | `docs/guides/tui-usage.md` — drift meter description |
-| `widgets/phase_progress.py` | `docs/guides/tui-usage.md` — phase progress bar description |
-| `screens/lineage_selector.py` / `lineage_detail.py` | `docs/guides/tui-usage.md` — lineage navigation section |
-| Any new screen added to `screens/` | `docs/guides/tui-usage.md` — add a new section; `docs/cli-reference.md` if a new key binding or `tui` sub-command is introduced |
+The docs for TUI screens and widgets under `src/ouroboros/tui/` are recorded in
+[`docs/doc-map.yml`](./docs/doc-map.yml).
 
 > **Note**: TUI key bindings visible in `screens/*.py` (`BINDINGS = [...]`) are user-facing and must be listed in `docs/guides/tui-usage.md`.
 
@@ -816,16 +688,11 @@ Changes under `src/ouroboros/tui/` that alter the visible interface or user inte
 
 ### Skills / Plugin → Doc Mapping
 
-Changes under `skills/` (YAML skill definitions used by Claude and Codex) or `src/ouroboros/plugin/` affect:
+The docs for `skills/*/SKILL.md`, the bundled agents in `src/ouroboros/agents/`,
+the managed Codex rules in `src/ouroboros/codex/ouroboros.md`, and
+`src/ouroboros/plugin/` are recorded in [`docs/doc-map.yml`](./docs/doc-map.yml).
 
-| Source path | Must update |
-|-------------|-------------|
-| `skills/codex.md` | `docs/runtime-guides/codex.md` — if skill instructions change |
-| `skills/*.yaml`, `skills/*/SKILL.md`, or `src/ouroboros/agents/*.md` | `docs/` guide that describes the affected skill/agent behaviour; `docs/runtime-guides/skill-capability-guides.md` if required capabilities change |
-| `src/ouroboros/plugin/skills/executor.py` | `docs/architecture.md` — skill execution model |
-| `src/ouroboros/plugin/agents/registry.py` | `docs/architecture.md` — agent registry; `docs/runtime-capability-matrix.md` if supported agents change per runtime |
-
-> **Note**: `skills/` YAML files are a user-visible configuration surface. Any new skill must be listed in the relevant runtime guide before the PR is merged.
+> **Note**: Skill definitions under `skills/` are a user-visible surface. Any new skill must be listed in the relevant runtime guide before the PR is merged.
 
 ---
 
@@ -867,8 +734,8 @@ When a reviewer or contributor identifies a documentation problem, classify it b
 | `docs/cli-reference.md` lists `--foo` flag that does not exist in the source | Critical | User runs the command and gets "no such option" |
 | `docs/getting-started.md` omits `uv sync` before `uv run ouroboros` | Critical | User's first command fails with ModuleNotFoundError |
 | `opencode` listed as a working `--runtime` value without `[Not yet available]` | High | User configures `--runtime opencode` and gets a confusing `NotImplementedError` |
-| `OUROBOROS_AGENT_RUNTIME` written as `OUROBOROS_RUNTIME_BACKEND` in one file | High | User sets the wrong env var and the setting silently has no effect |
-| Docs recommend `export OUROBOROS_MAX_PARALLEL=2` but the variable does not exist | High | User sets the variable; parallelism is not actually limited (false expectation) |
+| `OUROBOROS_AGENT_RUNTIME` written as `OUROBOROS_RUNTIME_BACKEND` in one file | High | User sets the wrong env var and the setting silently has no effect <!-- docs-drift: ignore --> |
+| Docs recommend `export OUROBOROS_MAX_PARALLEL=2` but the variable does not exist | High | User sets the variable; parallelism is not actually limited (false expectation) <!-- docs-drift: ignore --> |
 | A major config section (`economics:`, `evaluation:`) entirely absent from docs | High | User who needs non-default configuration for that section has no documentation to follow; they omit a required step |
 | `claude-code` vs `claude_code` used interchangeably across different docs files | Medium | Minor confusion; both forms resolve correctly in the CLI |
 | Section headings use Title Case in some files and Sentence case in others | Medium | Style inconsistency; no functional impact |
@@ -889,15 +756,19 @@ When a reviewer or contributor identifies a documentation problem, classify it b
 
 ### Documentation Decay Detection
 
-To catch doc drift during development, reviewers should check:
+Drift that can be detected mechanically is moving into pytest checks under
+`tests/unit/docs/`, which run in the required test job. The policy, the
+corpus they scan, and what to do when one fails are in
+[Docs Freshness](./docs/contributing/docs-freshness.md). Until a check below is
+automated there, reviewers should check it by hand:
 
 1. **Flag parity**: Run `ouroboros <cmd> --help` and compare every flag to `docs/cli-reference.md`. Any mismatch is a documentation bug.
 2. **Placeholder honesty**: If a command's implementation body is `# Placeholder implementation`, the corresponding doc entry must say `[Placeholder — not yet implemented]`.
 3. **Runtime parity**: `claude`, `codex`, and `opencode` are all fully-implemented backends. Any doc that lists a backend as available must have a corresponding runtime guide in `docs/runtime-guides/`.
 4. **Config key drift**: After any change to `src/ouroboros/config/models.py`, grep for the changed key name across `docs/` to find stale references.
 5. **TUI key bindings**: If `screens/*.py` `BINDINGS` arrays change, verify `docs/guides/tui-usage.md` reflects the new keys.
-6. **Skills registry drift**: If a new `skills/*.yaml` file is added, check that `docs/runtime-guides/codex.md` or the relevant guide mentions it.
-7. **Orchestrator new file**: If a new `.py` file is added to `src/ouroboros/orchestrator/`, add it to the Orchestrator → Doc Mapping table above before the PR is merged.
+6. **Skills registry drift**: If a new `skills/<name>/SKILL.md` is added, check that `docs/runtime-guides/codex.md` or the relevant guide mentions it.
+7. **Orchestrator new file**: If a new `.py` file is added to `src/ouroboros/orchestrator/`, add an entry for it to [`docs/doc-map.yml`](./docs/doc-map.yml) before the PR is merged, then run `uv run python3 scripts/check-doc-impact.py --validate`.
 
 ```bash
 # Quick doc-drift scan: compare CLI help output with cli-reference.md
@@ -909,14 +780,11 @@ uv run ouroboros status --help
 # Find stale config key references
 grep -r "opencode_permission_mode\|runtime_backend\|codex_cli_path" docs/
 
-# Find any 'opencode' reference in docs that lacks the [Not yet available] marker
-grep -rn "opencode" docs/ | grep -v "Not yet available" | grep -v "semantic-link-rot" | grep -v "cli-audit"
-
 # Check TUI key bindings are documented
 grep -rn "BINDINGS" src/ouroboros/tui/screens/ | grep -v "__pycache__"
 
-# List skill YAML files to cross-check against runtime guides
-ls skills/*.yaml 2>/dev/null || echo "No skill YAML files found"
+# List skill definitions to cross-check against runtime guides
+ls skills/*/SKILL.md
 ```
 
 ---
@@ -929,6 +797,8 @@ ls skills/*.yaml 2>/dev/null || echo "No skill YAML files found"
 - [Review Conventions](./docs/contributing/review-conventions.md) - What the review bot demands, and how to preempt a round
 - [Key Patterns](./docs/contributing/key-patterns.md) - Core patterns with code examples
 - [CI Gates and Branch Protection](./docs/contributing/ci-gates.md) - What CI enforces, how to reproduce it locally, and how releases land
+- [Issue Reference Report](./docs/contributing/issue-reference-report.md) - Read-only, manually triggered evidence for issue review
+- [Docs Freshness](./docs/contributing/docs-freshness.md) - How docs drift is detected, and what to do when a docs check fails
 
 ---
 

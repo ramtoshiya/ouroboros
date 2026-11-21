@@ -14,7 +14,9 @@ from ouroboros.config import (
     get_agent_runtime_backend,
     get_cli_path,
     get_codex_cli_path,
+    get_copilot_acp_fallback,
     get_copilot_cli_path,
+    get_copilot_transport,
     get_gjc_cli_path,
     get_goose_cli_path,
     get_hermes_cli_path,
@@ -186,6 +188,18 @@ def _create_grok_runtime(request: _AgentRuntimeRequest) -> AgentRuntime:
     )
 
 
+def _create_megacode_runtime(request: _AgentRuntimeRequest) -> AgentRuntime:
+    from ouroboros.orchestrator.megacode_runtime import MegacodeRuntime
+
+    # The constructor owns shared resolution for both factory and direct calls.
+    return MegacodeRuntime(
+        cli_path=request.cli_path,
+        startup_output_timeout_seconds=request.startup_output_timeout_seconds,
+        stdout_idle_timeout_seconds=request.stdout_idle_timeout_seconds,
+        **_runtime_kwargs(request),
+    )
+
+
 def _create_kiro_runtime(request: _AgentRuntimeRequest) -> AgentRuntime:
     from ouroboros.orchestrator.kiro_adapter import KiroAgentAdapter
 
@@ -198,6 +212,17 @@ def _create_kiro_runtime(request: _AgentRuntimeRequest) -> AgentRuntime:
 def _create_copilot_runtime(request: _AgentRuntimeRequest) -> AgentRuntime:
     from ouroboros.orchestrator.copilot_cli_runtime import CopilotCliRuntime
 
+    if get_copilot_transport() == "acp":
+        from ouroboros.orchestrator.copilot_acp_runtime import CopilotAcpRuntime
+
+        return CopilotAcpRuntime(
+            cli_path=request.cli_path or get_copilot_cli_path(),
+            runtime_profile=get_runtime_profile(),
+            startup_output_timeout_seconds=request.startup_output_timeout_seconds,
+            stdout_idle_timeout_seconds=request.stdout_idle_timeout_seconds,
+            fallback_to_cli=get_copilot_acp_fallback(),
+            **_runtime_kwargs(request),
+        )
     return CopilotCliRuntime(
         cli_path=request.cli_path or get_copilot_cli_path(),
         runtime_profile=get_runtime_profile(),
@@ -288,6 +313,7 @@ _AGENT_RUNTIME_FACTORIES: dict[str, Callable[[_AgentRuntimeRequest], AgentRuntim
     "_create_gemini_runtime": _create_gemini_runtime,
     "_create_antigravity_runtime": _create_antigravity_runtime,
     "_create_grok_runtime": _create_grok_runtime,
+    "_create_megacode_runtime": _create_megacode_runtime,
     "_create_kiro_runtime": _create_kiro_runtime,
     "_create_copilot_runtime": _create_copilot_runtime,
     "_create_goose_runtime": _create_goose_runtime,
@@ -309,8 +335,14 @@ def create_agent_runtime(
     llm_backend: str | None = None,
     startup_output_timeout_seconds: float | None = None,
     stdout_idle_timeout_seconds: float | None = None,
+    web_search: bool = False,
 ) -> AgentRuntime:
-    """Create an orchestrator agent runtime from config or explicit options."""
+    """Create an orchestrator agent runtime from config or explicit options.
+
+    ``web_search=True`` turns on live web search where the runtime is launched
+    with a flag for it: the ``codex`` CLI runtime only. Every other backend
+    ignores it; Claude gets web tools per call through ``tools``.
+    """
     resolved_backend = resolve_agent_runtime_backend(backend)
     resolved_permission_mode = permission_mode or get_agent_permission_mode(
         backend=resolved_backend
@@ -332,6 +364,8 @@ def create_agent_runtime(
             ),
             "llm_backend": resolved_llm_backend,
         }
+        if web_search and resolved_backend == "codex":
+            runtime_kwargs["web_search"] = True
 
     spec = get_backend_factory_spec(resolved_backend, kind="runtime")
     if spec is None or spec.agent_runtime_factory is None:

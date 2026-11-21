@@ -88,7 +88,7 @@ gjc mcp-serve coordinator
 
 Ouroboros는 GJC 엔드포인트 기록이나 인증 정보를 읽지 않으며 비공개 SDK WebSocket도 열지 않습니다. 엔드포인트 발견, 인증, 세대 펜싱, 턴 전달은 GJC Broker와 `SessionRouter`만 관리합니다.
 
-GJC 어댑터는 MCP v2 통합입니다. setup은 `runtime_backend: gjc` 또는 `llm.backend: gjc`를 기록하기 전에 현재 Ouroboros 인터프리터에 고정 버전 `mcp==2.2.0` 클라이언트가 있는지 확인합니다. 이 프로필은 MCP 1.x 의존성을 유지하는 Claude Agent SDK 프로필과 분리해야 합니다.
+GJC 어댑터는 MCP v2 통합입니다. setup은 `runtime_backend: gjc` 또는 `llm.backend: gjc`를 기록하기 전에 현재 Ouroboros 인터프리터에 고정 버전 `mcp==2.3.0` 클라이언트가 있는지 확인합니다. 이 프로필은 MCP 1.x 의존성을 유지하는 Claude Agent SDK 프로필과 분리해야 합니다.
 
 ## GJC에서 `ooo`의 동작
 
@@ -164,6 +164,7 @@ GJC가 Seed 작업을 실행하게 하려면 GJC를 런타임 백엔드로 사�
 
 ## 한계
 
+- GJC worker는 `.mcp.json` 같은 프로젝트 MCP 설정을 발견해 중첩된 Ouroboros 서버를 시작할 수 있습니다. 현재 Ouroboros에는 이 발견을 억제하는 검증된 GJC 옵션이 없습니다. 자식 환경의 깊이 제한은 상속되는 경우 중첩 실행을 제한할 수 있지만, 첫 중첩 서버를 막거나 worker 종료를 보장하지는 않습니다. 워크플로를 실행하기 전에 GJC 프로젝트 MCP 설정을 확인하고 원하지 않는 재귀 항목을 피하세요.
 - 활성 도구와 권한 정책은 GJC가 소유합니다. Ouroboros 도구 허용 목록과 권한 모드 재정의는 적용된 것처럼 표시하지 않고 무시된 것으로 보고합니다.
 - LLM 구조화 출력은 여전히 프롬프트로 요청한 뒤 턴이 끝난 후 검증합니다. 이 SDK 경로에서 GJC는 공급자 자체 출력 스키마 봉투를 제공하지 않습니다.
 - Coordinator가 만든 세션과 턴 저널은 영구 보존됩니다. 정리 작업이 실패해도 완료된 결과를 대체하지 않습니다. 다음 Coordinator 시작 시 GJC 자체 생명주기 권한에 따라 남은 상태를 조정할 수 있습니다.

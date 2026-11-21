@@ -620,6 +620,45 @@ class TestBackgroundJobPath:
         assert result.value.meta["frugality_assurance"] == "observe"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("selected_mode", "later_default", "notice_expected"),
+        [("adaptive", "quality_first", False), ("quality_first", "adaptive", True)],
+    )
+    async def test_receipt_uses_started_policy_if_config_changes(
+        self, event_store, fake_inner_auto, tmp_path, selected_mode, later_default, notice_expected
+    ) -> None:
+        job_manager = MagicMock()
+        job_manager.allocate_job_id = AsyncMock(return_value="job_alloc")
+        snapshot = MagicMock()
+        snapshot.job_id = "job_auto_policy_snapshot"
+
+        async def _start_job(*, runner, **_):
+            if inspect.iscoroutine(runner):
+                runner.close()
+            return snapshot
+
+        job_manager.start_job = AsyncMock(side_effect=_start_job)
+        h = StartAutoHandler(
+            event_store=event_store, job_manager=job_manager, store=AutoStore(tmp_path)
+        )
+        h._inner_auto = fake_inner_auto
+        with (
+            patch(
+                "ouroboros.mcp.tools.auto_handler.default_execution_efficiency_mode",
+                return_value=selected_mode,
+            ),
+            patch(
+                "ouroboros.config.policy_notice.default_execution_efficiency_mode",
+                return_value=later_default,
+            ),
+        ):
+            result = await h.handle({"goal": "build a CLI"})
+
+        assert result.is_ok
+        assert result.value.meta["efficiency_mode"] == selected_mode
+        assert ("(default;" in result.value.text_content) is notice_expected
+
+    @pytest.mark.asyncio
     async def test_now_binds_durable_job_scoped_cancel_key(
         self, event_store, fake_inner_auto, tmp_path, monkeypatch
     ) -> None:
@@ -1534,17 +1573,13 @@ class TestBackgroundJobPath:
         assert "user_preferences" not in runner_args
 
     @pytest.mark.asyncio
-    async def test_mcp_plugin_mode_wires_seed_qa_with_demoted_authoring_handler(
+    @pytest.mark.usefixtures("auto_project_cwd")
+    async def test_mcp_auto_wires_no_pre_run_seed_review(
         self, event_store, tmp_path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Plugin auto must not bypass the pre-run Seed QA gate."""
+        """#3064: a written Seed goes straight to the run; nothing reviews it first."""
 
         captured: dict[str, object] = {}
-
-        class FakeQAHandler:
-            def __init__(self, **kwargs):
-                self.kwargs = kwargs
-                captured["qa_handler"] = self
 
         class FakeAutoPipeline:
             def __init__(self, *_args, **kwargs):
@@ -1558,7 +1593,6 @@ class TestBackgroundJobPath:
                     phase=str(state.phase.value),
                 )
 
-        monkeypatch.setattr("ouroboros.mcp.tools.auto_handler.QAHandler", FakeQAHandler)
         monkeypatch.setattr("ouroboros.mcp.tools.auto_handler.AutoPipeline", FakeAutoPipeline)
 
         h = AutoHandler(
@@ -1571,17 +1605,46 @@ class TestBackgroundJobPath:
         result = await h._run({"goal": "build a CLI"})
 
         assert result.status == "blocked"
-        qa_handler = captured["qa_handler"]
-        assert qa_handler.kwargs["agent_runtime_backend"] == "opencode"
-        assert qa_handler.kwargs["opencode_mode"] == "subprocess"
         kwargs = captured["pipeline_kwargs"]
-        assert kwargs["seed_qa_evaluator"] is not None
-        assert kwargs["seed_qa_evaluator"].qa_handler is qa_handler
-        # The pipeline no longer takes an `evaluator`: the run job's chain owns
-        # the post-run verdict.
-        assert "evaluator" not in kwargs
+        for removed in ("seed_qa_evaluator", "repairer", "reviewer", "grade_gate", "evaluator"):
+            assert removed not in kwargs
+        import ouroboros.mcp.tools.auto_handler as auto_handler_module
+
+        assert not hasattr(auto_handler_module, "QAHandler")
 
     @pytest.mark.asyncio
+    @pytest.mark.usefixtures("auto_project_cwd")
+    async def test_mcp_auto_accepts_and_ignores_max_repair_rounds(
+        self, event_store, tmp_path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The deprecated bound is accepted, never validated, never persisted."""
+
+        captured: dict[str, object] = {}
+
+        class FakeAutoPipeline:
+            def __init__(self, *_args, **_kwargs):
+                pass
+
+            async def run(self, state):
+                captured["max_repair_rounds"] = state.max_repair_rounds
+                return AutoPipelineResult(
+                    status="blocked",
+                    auto_session_id=state.auto_session_id,
+                    phase=str(state.phase.value),
+                )
+
+        monkeypatch.setattr("ouroboros.mcp.tools.auto_handler.AutoPipeline", FakeAutoPipeline)
+
+        h = AutoHandler(store=AutoStore(tmp_path), event_store=event_store)
+
+        # 0 used to fail ``max_repair_rounds must be >= 1``; now it changes nothing.
+        result = await h._run({"goal": "build a CLI", "max_repair_rounds": 0})
+
+        assert result.status == "blocked"
+        assert captured["max_repair_rounds"] == 5
+
+    @pytest.mark.asyncio
+    @pytest.mark.usefixtures("auto_project_cwd")
     async def test_auto_never_suppresses_the_run_job_successors(
         self, event_store, tmp_path
     ) -> None:

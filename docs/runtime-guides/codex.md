@@ -81,11 +81,17 @@ Use `~/.ouroboros/config.yaml` for Ouroboros runtime settings. For everyday mode
 
 Choose **Use Codex default model** to keep Codex's current default model. This is the recommended setting: Ouroboros passes only the role's reasoning effort to each Codex invocation, so a newer model selected in Codex App or CLI is used automatically. Choose a listed model or **Enter another model ID…** only when you deliberately want to pin a model for a stage, including Execute.
 
-Per-AC model-tier routing preserves this automatic path. To deliberately use a
-concrete ladder, request an explicit tier (for example `--model frontier`) or
-set `OUROBOROS_MODEL_TIER_ROUTING=1`. The router prefers `provider: codex`
-entries in `economics.tiers`, then falls back to `openai`; explicit model pins
-still take precedence. See [native ladder configuration](../config-reference.md#native-runtime-ladders).
+Per-AC model-tier routing preserves this automatic path. The shipped
+`economics.tiers` ladder names no Codex model (each `openai` tier is `default`),
+so Codex keeps its selected model even when a tier is requested; a config from
+an earlier release that still holds `gpt-6-luna` / `gpt-6.1-sol` /
+`gpt-6-astra` or older shipped ids is treated the same way. To route tiers to
+specific models, set your own ids, then request an explicit tier (for example
+`--model frontier`) or set `OUROBOROS_MODEL_TIER_ROUTING=1`. The router prefers
+`provider: codex` entries in `economics.tiers`, then falls back to `openai`;
+put an exact shipped-looking id under `provider: codex` to keep it literal.
+Explicit model pins still take precedence. See
+[native ladder configuration](../config-reference.md#native-runtime-ladders).
 
 The settings picker is a static catalog fallback, not a list guaranteed for
 your account. `codex-cli 0.160.0 --help` (checked 2026-10-18) confirms
@@ -198,6 +204,7 @@ still invalidate the runtime identity as before.
 | `ooo` Skill | Codex session | CLI equivalent (Terminal) |
 |-------------|---------------|--------------------------|
 | `ooo interview` | Yes | `ouroboros init start --llm-backend codex "your idea"` |
+| `ooo idk` | Yes | *(interview MCP control turn; calibrates subsequent wording)* |
 | `ooo seed` | Yes | *(bundled in `ouroboros init start`)* |
 | `ooo run` | Yes | `ouroboros run workflow --runtime codex seed.yaml` |
 | `ooo status` | Yes | `ouroboros status execution <execution_id>` |
@@ -270,6 +277,11 @@ ouroboros init start "Build a task management CLI"
 ```
 
 ## How It Works
+
+Codex LLM completion responses preserve the native completed-turn input and
+output token counts. Cached-input and reasoning-token fields are breakdowns of
+those counts and are not added again. Missing native usage keeps the zero
+fallback; each invocation uses its last valid completed-turn report.
 
 ```
 +-----------------+     +------------------+     +-----------------+
@@ -387,24 +399,27 @@ uv run ouroboros run workflow --runtime codex --resume <session_id> ~/.ouroboros
 > opt-out — the CLI's "Generate Seed anyway" and the MCP `force` parameter. Bypassing it still records
 > the real score in seed metadata and emits the bypass to the audit log.
 >
-> `ouroboros auto` re-checks readiness during a run, but **conditionally**, and the
-> two suppression cases have opposite consequences
-> ([`auto/grading.py:225-226`](../../src/ouroboros/auto/grading.py)):
+> `ouroboros auto` does not re-check the score after the Seed is written: there
+> is no Seed review or grade between Seed generation and the run (#3064), and
+> the run verifies each acceptance criterion after it executes. When the
+> interview closed on ledger evidence (`closure_mode` of `ledger_only` or
+> `safe_default`), Seed generation is forced past the 0.2 gate because the
+> ledger's structural completeness is the acceptance signal.
 >
-> - **Ledger closure** (`closure_mode` of `ledger_only` or `safe_default`, not
->   degraded): the ledger's structural completeness is the acceptance signal and
->   the LLM-derived score is stale by design, so a Seed scoring well above 0.2 can
->   grade A and **run**. Other grading axes still apply.
-> - **Degraded Seed** (interview deadline): the blocker is suppressed, and the
->   grade and `may_run` bars are waived, because the unresolved slots are
->   reported as findings and hold the grade below A by construction. A
->   blocker-free degraded Seed that carries the user's goal on record
->   (`sourced_scope`) **runs** like any auto Seed: the worker is told only that
->   goal, and the unresolved slots stay in the Seed and the result
->   ([`auto/grade_gate_terminals.py`](../../src/ouroboros/auto/grade_gate_terminals.py)).
->   Without a sourced goal it never reaches RUN, so the session stops
+> A **degraded Seed** (the interview deadline closed the interview) follows the
+> interview's own closure rules instead
+> ([`auto/degraded_seed.py`](../../src/ouroboros/auto/degraded_seed.py)):
+>
+> - a required ledger section marked `BLOCKED` (an answer only a human can
+>   give) stops the session with stop reason `degraded_seed_safety_blockers`;
+> - otherwise, a degraded Seed that carries the user's goal on record
+>   (`sourced_scope`) **runs** like any auto Seed: the worker is told that goal
+>   (and, when one attempt is judged against several acceptance criteria, those
+>   criteria and their expected artifacts), and the unresolved slots stay in the
+>   Seed and the result;
+> - without a sourced goal it never reaches RUN, so the session stops
 >   `AutoPhase.BLOCKED` with stop reason `degraded_seed_not_executed`, never
->   `COMPLETE`. Remaining blockers are hard safety blockers and still terminate.
+>   `COMPLETE`.
 >
 > In practice: a hand-written seed carrying a high `ambiguity_score` is not blocked by
 > `ouroboros run workflow`. The field is provenance, not an enforcement gate.
@@ -545,3 +560,11 @@ harness changes, attention, and terminal assurance. The user can keep talking in
 the main session; it semantically selects the affected AC and never asks for
 internal IDs. English is the canonical guidance language, while the host phrases
 these facts naturally in the user's current conversation language.
+
+## Checking the Codex MCP connection
+
+Run `ouroboros codex doctor --live-mcp` to launch the configured stdio server and
+check its MCP initialization and tool list. The diagnostic reports failure
+categories, but omits server stderr and JSON-RPC error text because these may
+contain credentials. Treat any additional server logs as sensitive before sharing
+them. HTTP MCP configurations cannot be checked by this live stdio probe.

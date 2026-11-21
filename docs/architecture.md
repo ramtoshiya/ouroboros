@@ -27,7 +27,7 @@ for the canonical meanings of `AgentRuntimeContext`, `ControlPlane`,
 │  │     REGISTRY        │     │                     │     │      LAYER           │                 │
 │  │  ┌───────────────┐  │     │  ┌───────────────┐  │     │  ┌───────────────┐  │                 │
 │  │  │   Skills      │──┼─────┼─▶│   Seed Spec    │──┼─────┼─▶│   TUI Dashboard │  │                 │
-│  │  │   (22)        │  │     │  │   (Immutable)  │  │     │  │   (Textual)   │  │                 │
+│  │  │   (23)        │  │     │  │   (Immutable)  │  │     │  │   (Textual)   │  │                 │
 │  │  └───────────────┘  │     │  └───────────────┘  │     │  └───────────────┘  │                 │
 │  │                     │     │                     │     │                     │                 │
 │  │  ┌───────────────┐  │     │  ┌───────────────┐  │     │  ┌───────────────┐  │                 │
@@ -60,7 +60,7 @@ for the canonical meanings of `AgentRuntimeContext`, `ControlPlane`,
 
 ### 1. Skills & Agents Registry
 **Auto-discovery of bundled skills and agents that ship with Ouroboros core**
-- Skills: 22 core workflow skills (auto, brownfield, cancel, config, evaluate, evolve, help, interview, ooo, pm, publish, qa, ralph, resume-session, run, seed, setup, status, tutorial, unstuck, update, welcome)
+- Skills: 23 core workflow skills (auto, brownfield, cancel, config, evaluate, evolve, help, idk, interview, ooo, pm, publish, qa, ralph, resume-session, run, seed, setup, status, tutorial, unstuck, update, welcome)
 - Agents: 21 specialized agents for different thinking modes
 - Hot-reload capabilities without restart
 - Magic prefix detection (`/ouroboros:`)
@@ -108,7 +108,7 @@ each entry point supplies its resolved request, workspace, and host context.
 **5-phase pipeline ensuring comprehensive execution**
 - Phase 0: Big Bang (Interview → Seed)
 - Phase 1: PAL Router (Cost optimization)
-- Phase 2: Double Diamond (Discover → Define → Design → Deliver)
+- Phase 2: Execution (dependency-staged AC fan-out to agent runtimes)
 - Phase 3: Resilience (Lateral thinking)
 - Phase 4: Evaluation (3-stage pipeline)
 
@@ -193,7 +193,7 @@ Ouroboros applies two ancient methods to transmute irrational input into executa
 ```
 Phase 0: BIG BANG         -> Crystallize requirements into a Seed
 Phase 1: PAL ROUTER       -> Select appropriate model tier
-Phase 2: DOUBLE DIAMOND   -> Decompose and execute tasks
+Phase 2: EXECUTION        -> Fan out and execute acceptance criteria
 Phase 3: RESILIENCE       -> Handle stagnation with lateral thinking
 Phase 4: EVALUATION       -> Verify outputs at three stages
 Phase 5: SECONDARY LOOP   -> Process deferred TODOs
@@ -220,55 +220,35 @@ The Big Bang phase transforms vague ideas into crystallized specifications throu
 
 ### Phase 1: PAL Router (Progressive Adaptive LLM)
 
-The PAL Router selects the most cost-effective model tier based on task complexity.
+The PAL Router picks a model tier for each unit of work and escalates it on retry.
+It is a stateless decision point in the orchestrator; there is no `routing/` package
+(`src/ouroboros/router/` is the unrelated skill-dispatch router).
 
 **Components:**
-- `routing/router.py` - Main routing logic
-- `routing/complexity.py` - Task complexity estimation
-- `routing/tiers.py` - Model tier definitions
-- `routing/escalation.py` - Escalation logic on failure
-- `routing/downgrade.py` - Downgrade logic on success
+- `orchestrator/model_routing.py` - Tier ladder, `build_model_router()`, and per-unit `decide_model()`
+- `orchestrator/effort_routing.py` - Sibling policy for reasoning effort (not model tier)
+- `config/models.py` - `EconomicsConfig` and `TierConfig` (tier definitions and thresholds)
 
 **Tiers:**
-| Tier | Cost | Complexity Threshold |
-|------|------|---------------------|
-| FRUGAL | 1x | < 0.4 |
-| STANDARD | 10x | < 0.7 |
-| FRONTIER | 30x | >= 0.7 or critical |
+| Tier | `cost_factor` (shipped default) |
+|------|------|
+| FRUGAL | 1 |
+| STANDARD | 10 |
+| FRONTIER | 30 |
 
-**Strategy:** Start frugal, escalate only on failure.
+**Starting tier:**
+- The base tier is one tier above `economics.default_tier`, capped at frontier: the shipped `frugal` gives `standard`, and both `standard` and `frontier` give `frontier`.
+- Top-level ACs and decomposed children without an explicit trust signal start at the base tier.
+- In adaptive efficiency mode, a decomposed child whose decomposition carries an explicit trust signal starts one tier lower, never below frugal. That equals `default_tier` when it is `frugal` or `standard`, but is `standard` when it is `frontier`. Quality-first runs never lower.
+- An execution-profile hint can suggest a different starting tier.
+- No complexity score is computed: token count, tool count, and AC depth do not affect the tier.
+- The shipped ladder is each runtime's own default: `haiku`/`sonnet`/`opus` on Claude Code, `flash`/`pro` on Gemini CLI, and `default` (no `--model`) on Codex. Ids an earlier release shipped resolve to the same defaults.
+- Routing stays dormant, leaving model choice to the runtime, when `OUROBOROS_MODEL_TIER_ROUTING` is `0`, `off`, or `false`; when an explicit Execute-stage model pin is in effect; when the runtime backend has no mapped tier ladder (for example OpenCode); when Codex runs on plain automatic model selection (opt in with `OUROBOROS_MODEL_TIER_ROUTING=1`); or when no tier names a model, as with the shipped Codex ladder.
 
-**Complexity Scoring Algorithm:**
+**Escalation:** failures move a unit toward the frontier tier. Top-level ACs on the bounded route path escalate in `orchestrator/route_escalation.py` (`advance_route()`); the retry-count rule in `decide_model()` (`orchestrator/model_routing.py`) covers the remaining units.
 
-The complexity score is a weighted sum of three normalized factors:
-
-| Factor | Weight | Normalization | Threshold |
-|--------|--------|---------------|-----------|
-| Token count | 30% | `min(tokens / 4000, 1.0)` | 4000 tokens |
-| Tool dependencies | 30% | `min(tools / 5, 1.0)` | 5 tools |
-| AC nesting depth | 40% | `min(depth / 5, 1.0)` | depth 5 |
-
-```
-complexity = 0.30 * norm_tokens + 0.30 * norm_tools + 0.40 * norm_depth
-```
-
-**Escalation Path:**
-
-When a task fails consecutively at its current tier (threshold: 2 failures), it escalates:
-
-```
-Frugal → Standard → Frontier → Stagnation Event (triggers resilience)
-```
-
-**Downgrade Path:**
-
-After sustained success (threshold: 5 consecutive successes), the tier downgrades:
-
-```
-Frontier → Standard → Frugal
-```
-
-Similar task patterns (Jaccard similarity >= 0.80) inherit tier preferences from previously successful tasks.
+**No downgrade path:** a tier is never lowered after consecutive successes.
+`economics.downgrade_success_streak` is accepted by the config schema, but nothing reads it.
 
 ### Phase 2: Execution
 
@@ -286,6 +266,7 @@ independently-verifiable units.
 - `orchestrator/parallel_executor.py` - Live recursive AC executor (dependency-staged fan-out, profile-based decomposition, evidence-gated delivery)
 - `orchestrator/decomposition_params.py` - Profile-driven decomposition prompts (axis / `min_unit` / branching)
 - `orchestrator/runner.py` - Orchestration entry point and dependency analysis
+- `orchestrator/process_local_authority.py` - Runner-owned process-local authority lifecycle, including liveness leases and retry retention
 
 **Dependency planning:**
 
@@ -409,7 +390,6 @@ src/ouroboros/
 |   +-- ac_tree.py     # Acceptance criteria tree
 |
 +-- bigbang/        # Phase 0: Interview and seed generation
-+-- routing/        # Phase 1: PAL router
 +-- resilience/     # Phase 3: Stagnation and lateral thinking
 +-- evaluation/     # Phase 4: Three-stage evaluation
 |
@@ -418,6 +398,7 @@ src/ouroboros/
 |   +-- codex_cli_runtime.py  # CodexCliRuntime adapter
 |   +-- runtime_factory.py    # create_agent_runtime() factory
 |   +-- runner.py      # Orchestration logic
+|   +-- model_routing.py      # Phase 1: PAL model-tier routing
 |   +-- session.py     # Session state tracking
 |   +-- events.py      # Orchestrator events
 |   +-- mcp_tools.py   # MCP tool provider for external tools
@@ -562,6 +543,73 @@ Every runtime adapter satisfies the `AgentRuntime` protocol (defined in `src/our
 
 The orchestrator never inspects backend-specific internals — each adapter maps its native events into these shared types.
 
+Codex CLI and OpenCode require an owned, captured process tree and confirmed
+leader exit before reporting successful termination. Copilot CLI, Gemini CLI,
+Antigravity CLI, Goose CLI, Grok CLI, Megacode and Zcode inherit Codex CLI's
+`_terminate_process` and therefore share this stricter cleanup requirement.
+Copilot ACP's read-only CLI fallback also inherits it; the ACP transport's own
+termination path instead closes its client without this process-tree proof.
+This scope concerns those CLI timeout and cancellation paths, not every
+provider adapter.
+
+If cleanup cannot be confirmed, a live handle's `terminate()` returns false and
+observation reports `termination_unconfirmed`; this is not proof that the
+process is gone. Rebinding an OpenCode handle refreshes its live lifecycle
+state without replacing a terminal state or an unconfirmed cleanup receipt.
+If the leader has already exited without a confirmed tree receipt, the handle
+does not promise it can rediscover or terminate remaining descendants. This
+does not establish bounded termination for every runtime or execution path.
+
+Native Windows currently has no supported process-table ownership proof in
+`worker_process_tree`: non-POSIX capture produces no owned members. These
+strict cleanup paths therefore cannot confirm termination on native Windows,
+even if best-effort cleanup stops the leader. Timeouts report
+`termination_confirmed: false`, and bound handle observations retain
+`termination_unconfirmed`. This conservative result does not mean cleanup
+necessarily failed; it means tree ownership and exit were not proved. Native
+Windows termination has not been verified by the POSIX tests, and confirmation
+must not be weakened to treat an empty capture as success.
+
+### Interview calibration control turns
+
+Unfamiliar terminology must not force a user to guess at a requirements decision.
+`ooo idk <evidence>` adjusts the current conversation's explanation level while
+preserving the interview's decisions, ambiguity checks, and closure gates.
+It carries one overall `foundational`, `working`, or `fluent` level plus explicit
+unknown terms; it is not a per-domain proficiency model or a permanent profile.
+
+`InterviewSessionTransition` in `orchestrator/interview_session.py` owns command
+classification, MCP arguments, and returned runtime metadata. The shared
+dispatcher and every direct runtime interceptor use this same contract:
+
+| Turn | MCP arguments | State effect |
+|------|---------------|--------------|
+| Start | `initial_context`, optional `interview_calibration` | Attach the returned interview session ID |
+| Answer | `session_id`, `answer`, optional `interview_calibration` | Advance only after a real answer |
+| Calibrate | `calibration_input`, optional `session_id`; never `answer` | Replace calibration and rephrase the same pending question |
+| Resume | `session_id`, optional `interview_calibration`; no answer | Retain the current pending round |
+
+Calibration can precede the first interview. Later results that return only a
+session ID retain the calibration, native runtime identity, and unrelated
+metadata. The bounded payload lives only in the active `RuntimeHandle` and is
+removed by durable serialization; loading a saved session requires recalibration.
+Claude/plugin clients relay `meta.interview_calibration` into subsequent MCP
+calls as `interview_calibration`, as specified by the canonical `idk` and
+`interview` skills. The server does not persist a user profile.
+
+The engine extension is optional: legacy `ask_next_question(state)` engines
+remain supported, and engines without `rephrase_pending_question` return the
+unchanged question. Provider errors, raised exceptions, and empty rephrases also
+return calibration with `question_rephrased=false` and explicitly state that
+the pending question is unchanged. Cancellation propagates after resource cleanup.
+Neither successful rephrasing nor fallback writes an answer to interview state.
+
+The runtime sequence tests live in `tests/unit/orchestrator/test_interview_session.py`;
+engine/fallback, inference, PM composition, and packaging contracts live in their
+owning MCP, calibration, Big Bang, and skill suites. Structured choices and the
+broader novice-friendly presentation work in #1638 remain separate from this
+wording control turn.
+
 ### Shipped adapters
 
 The canonical backend names, registered aliases, concrete adapters, and source
@@ -576,6 +624,7 @@ worker transports; the remaining entries are user-selectable runtimes.
 | `claude_mcp` | `LeaderDrivenWorkerRuntime` over `claude -p --resume` | `claude_worker` | `src/ouroboros/orchestrator/claude_worker_runtime.py` |
 | `copilot` | `CopilotCliRuntime` | `copilot_cli` | `src/ouroboros/orchestrator/copilot_cli_runtime.py` |
 | `gemini` | `GeminiCLIRuntime` | `gemini_cli` | `src/ouroboros/orchestrator/gemini_cli_runtime.py` |
+| `megacode` | `MegacodeRuntime` | `megacode_cli` | `src/ouroboros/orchestrator/megacode_runtime.py` |
 | `zcode` | `ZcodeCLIRuntime` | `zcode_cli` | `src/ouroboros/orchestrator/zcode_cli_runtime.py` |
 | `hermes` | `HermesCliRuntime` | `hermes_cli` | `src/ouroboros/orchestrator/hermes_runtime.py` |
 | `kiro` | `KiroAgentAdapter` | `kiro_cli` | `src/ouroboros/orchestrator/kiro_adapter.py` |
@@ -619,6 +668,33 @@ The public CLI additionally maps `claude-sdk` and `claude_sdk` to `claude`, and
 `claude-cli` to the internal `claude_mcp` transport. Those package-profile
 spellings are defined in `src/ouroboros/package_profiles.py`; all other aliases
 are the registered aliases in the table above.
+
+### Copilot ACP transport
+
+The existing `copilot` factory selects `CopilotCliRuntime` by default or
+`CopilotAcpRuntime` when `orchestrator.copilot_transport=acp`. This is not another
+backend enum or an LLM adapter: LLM-only flows keep `CopilotCliLLMAdapter`.
+
+```text
+CopilotAcpRuntime → CopilotAcpClient → copilot --acp --stdio
+  → CopilotAcpEventTranslator → AgentMessage
+  → project_runtime_message → ExecutionEventEmitter → existing EventStore
+  → live consumers, task history, replay
+```
+
+ACP-specific process/RPC, permission, and translation code lives under
+`src/ouroboros/copilot/acp_*.py`. Each invocation owns a fresh process/session.
+The sequential runner and parallel executor share a progress-emission policy
+that preserves every text delta and tool progress event rather than sampling
+deltas every tenth message. Projection keeps exact delta whitespace, tool IDs,
+available parent/agent correlation, command exit codes, and transport metadata.
+Private thought chunks never enter the normalized event stream.
+
+Cancellation sends ACP cancel before process cleanup. Native session resume is
+not supported; persisted history remains replayable. Pre-prompt fallback is
+limited to read-only/tool-less envelopes and never hides authentication failures
+or replays a submitted prompt. See the [ACP runtime guide](runtime-guides/copilot-acp.md)
+for the wire contract, permissions, diagnostics, and supported boundaries.
 
 For API details, see the source in `src/ouroboros/orchestrator/adapter.py`. For contributing a new runtime adapter, see [Contributing](contributing/).
 

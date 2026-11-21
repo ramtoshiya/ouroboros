@@ -83,6 +83,8 @@ UNTRUSTED_ENV_DENYLIST = frozenset(
         "OUROBOROS_CLI_PATH",
         "OUROBOROS_CODEX_CLI_PATH",
         "OUROBOROS_COPILOT_CLI_PATH",
+        "OUROBOROS_COPILOT_TRANSPORT",
+        "OUROBOROS_COPILOT_ACP_FALLBACK",
         "OUROBOROS_KIRO_CLI_PATH",
         "OUROBOROS_OPENCODE_CLI_PATH",
         "OUROBOROS_HERMES_CLI_PATH",
@@ -95,6 +97,7 @@ UNTRUSTED_ENV_DENYLIST = frozenset(
         "OUROBOROS_GROK_CLI_PATH",
         "OUROBOROS_OUROCODE_CLI_PATH",
         "OUROBOROS_ZCODE_CLI_PATH",
+        "OUROBOROS_MEGACODE_CLI_PATH",
         "OUROBOROS_DSH_CLI_PATH",
         # POSIX shell the orchestrator runs every AC verify_command through.
         # A repo .env pointing this at its own binary would execute arbitrary
@@ -169,6 +172,9 @@ UNTRUSTED_ENV_DENYLIST = frozenset(
         # Claude Code resolves settings.json (hooks, permission mode, MCP
         # servers) from this root; same class as CODEX_HOME.
         "CLAUDE_CONFIG_DIR",
+        # Megacode harness config root, inherited by both runtime workers
+        # and LLM completions. Only trusted sources may select this config.
+        "HARNESS_HOME",
         # Platform home selectors also choose Ouroboros' trusted config root.
         # A project .env must not turn a repository directory into ~/.ouroboros.
         "HOME",
@@ -223,6 +229,10 @@ UNTRUSTED_ENV_DENYLIST = frozenset(
         # Onboarding attribution is an analytics boundary. A cloned repo must
         # not rewrite the surface label used to compare activation cohorts.
         "OUROBOROS_FIRST_COMMAND_SURFACE",
+        # Same boundary: the console sets this on the CLI processes it starts
+        # so their usage counts under the console surface; a cloned repo must
+        # not relabel a user's CLI usage.
+        "_OUROBOROS_TELEMETRY_SURFACE",
         # Check-package switch (boundary/switch.py): a cloned repo must not
         # turn off the verification layer that judges its own changes, nor
         # decide whether model-written checks execute.
@@ -237,6 +247,9 @@ UNTRUSTED_ENV_DENYLIST = frozenset(
         # off the repository reading, so a cloned repo must not set it.
         "OUROBOROS_AUTO_INVESTIGATOR_MAX_CALLS",
         "OUROBOROS_AUTO_INVESTIGATOR_CALL_TIMEOUT_SECONDS",
+        # ``ooo auto`` expected-experience research timeout (auto/expectations.py): 0
+        # turns the research off, so a project's own ``.env`` must not set it.
+        "OUROBOROS_AUTO_EXPECTATIONS_TIMEOUT",
         "DO_NOT_TRACK",
         "CI",
         "GITHUB_ACTIONS",

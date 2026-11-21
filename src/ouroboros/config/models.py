@@ -30,12 +30,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field, field_validator
 import yaml
 
-from ouroboros.config._model_defaults import (
-    CODEX_TIER_MODELS,
-    DEFAULT_HAIKU_MODEL,
-    DEFAULT_OPUS_MODEL,
-    DEFAULT_SONNET_MODEL,
-)
+from ouroboros.config._model_defaults import SHIPPED_TIER_LADDER
 from ouroboros.orchestrator_stage import VALID_STAGE_KEYS
 
 _SAFE_PROJECT_GUIDANCE_ID_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,62}[A-Za-z0-9])?$")
@@ -146,6 +141,7 @@ class LLMConfig(BaseModel, frozen=True):
         "dsh",
         "gjc",
         "zcode",
+        "megacode",
     ] = "claude_code"
     permission_mode: Literal["default", "acceptEdits", "bypassPermissions"] = "default"
     opencode_permission_mode: Literal["default", "acceptEdits", "bypassPermissions"] = "acceptEdits"
@@ -536,6 +532,8 @@ VALID_RUNTIME_BACKENDS = frozenset(
         "grok_build",
         "zcode",
         "zcode_cli",
+        "megacode",
+        "megacode_cli",
         "host",
         "host_dispatch",
     }
@@ -669,6 +667,9 @@ class OrchestratorConfig(BaseModel, frozen=True):
             - ~ expansion supported
             - None: Resolve from config/env or fall back to the macOS app-bundle
               default (or OUROBOROS_ZCODE_CLI_PATH)
+        megacode_cli_path: Path to the megacode harness CLI binary (``harness``).
+            Supports absolute paths and ~ expansion; None resolves from PATH at
+            runtime (or OUROBOROS_MEGACODE_CLI_PATH)
         default_max_turns: Default max turns for agent execution
         max_parallel_workers: Default maximum concurrent AC workers
         usage_limit_pause_hours: Default pause window for provider usage/quota limits
@@ -682,7 +683,9 @@ class OrchestratorConfig(BaseModel, frozen=True):
               clean
             - ``remove``: remove clean worktrees; delete the branch only when
               Git accepts a safe merged-branch deletion
-        worktree_lock_stale_after_minutes: Staleness threshold for task lock recovery
+        worktree_lock_stale_after_minutes: Legacy compatibility setting. Remote
+            task locks are retained regardless of heartbeat age because age alone
+            cannot prove the remote owner has exited.
         pm_snapshot_worktrees: Whether PM brownfield exploration reads from
             persistent detached worktrees pinned to the remote default branch
             (``origin/HEAD``) instead of the developer's live checkout. The
@@ -707,6 +710,7 @@ class OrchestratorConfig(BaseModel, frozen=True):
         "antigravity",
         "grok",
         "zcode",
+        "megacode",
         "host",
     ] = "claude"
     runtime_profile: RuntimeProfileConfig | None = None
@@ -739,6 +743,8 @@ class OrchestratorConfig(BaseModel, frozen=True):
     cli_path: str | None = None
     codex_cli_path: str | None = None
     copilot_cli_path: str | None = None
+    copilot_transport: Literal["cli", "acp"] = "cli"
+    copilot_acp_fallback: bool = True
     opencode_cli_path: str | None = None
     opencode_stdout_idle_timeout_seconds: float | None = Field(default=None, gt=0.0)
     hermes_cli_path: str | None = None
@@ -752,6 +758,7 @@ class OrchestratorConfig(BaseModel, frozen=True):
     grok_cli_path: str | None = None
     ourocode_cli_path: str | None = None
     zcode_cli_path: str | None = None
+    megacode_cli_path: str | None = None
     dsh_cli_path: str | None = None
     # dsh Cordis composition file passed to `dsh-acp-demo --config`. Not an
     # executable itself, but it names the plugins the Node process loads, so it
@@ -787,6 +794,7 @@ class OrchestratorConfig(BaseModel, frozen=True):
         "grok_cli_path",
         "ourocode_cli_path",
         "zcode_cli_path",
+        "megacode_cli_path",
         "dsh_cli_path",
         "dsh_config_path",
         "verify_bash_path",
@@ -949,18 +957,26 @@ def get_default_config() -> OuroborosConfig:
     return OuroborosConfig(
         economics=EconomicsConfig(
             default_tier="frugal",
-            # openai entries are the currently documented Codex CLI model ids per
-            # tier (frugal/standard/frontier). Codex users on a custom
-            # model_providers config or a proxy should override economics.tiers or
-            # pin OUROBOROS_EXECUTION_MODEL, since those ids are not routable there.
+            # Each runtime runs its own default model for a tier
+            # (``SHIPPED_TIER_LADDER``): Claude Code gets ``haiku``/``sonnet``/
+            # ``opus`` and Gemini CLI ``flash``/``pro``, which each CLI resolves for
+            # its provider, and Codex's ``default`` sends no ``--model`` so Codex
+            # keeps its configured model. To route tiers to specific models, set
+            # them here (a ``codex``/``claude``/``gemini`` entry is never rewritten).
             tiers={
                 "frugal": TierConfig(
                     cost_factor=1,
                     intelligence_range=(9, 11),
                     models=[
-                        ModelConfig(provider="openai", model=CODEX_TIER_MODELS["frugal"]),
-                        ModelConfig(provider="google", model="gemini-2.0-flash"),
-                        ModelConfig(provider="anthropic", model=DEFAULT_HAIKU_MODEL),
+                        ModelConfig(
+                            provider="openai", model=SHIPPED_TIER_LADDER["openai"]["frugal"]
+                        ),
+                        ModelConfig(
+                            provider="google", model=SHIPPED_TIER_LADDER["google"]["frugal"]
+                        ),
+                        ModelConfig(
+                            provider="anthropic", model=SHIPPED_TIER_LADDER["anthropic"]["frugal"]
+                        ),
                     ],
                     use_cases=["routine_coding", "log_analysis", "stage1_fix"],
                 ),
@@ -968,9 +984,15 @@ def get_default_config() -> OuroborosConfig:
                     cost_factor=10,
                     intelligence_range=(14, 16),
                     models=[
-                        ModelConfig(provider="openai", model=CODEX_TIER_MODELS["standard"]),
-                        ModelConfig(provider="anthropic", model=DEFAULT_SONNET_MODEL),
-                        ModelConfig(provider="google", model="gemini-2.5-pro"),
+                        ModelConfig(
+                            provider="openai", model=SHIPPED_TIER_LADDER["openai"]["standard"]
+                        ),
+                        ModelConfig(
+                            provider="anthropic", model=SHIPPED_TIER_LADDER["anthropic"]["standard"]
+                        ),
+                        ModelConfig(
+                            provider="google", model=SHIPPED_TIER_LADDER["google"]["standard"]
+                        ),
                     ],
                     use_cases=["logic_design", "stage2_evaluation", "refactoring"],
                 ),
@@ -978,8 +1000,12 @@ def get_default_config() -> OuroborosConfig:
                     cost_factor=30,
                     intelligence_range=(18, 20),
                     models=[
-                        ModelConfig(provider="openai", model=CODEX_TIER_MODELS["frontier"]),
-                        ModelConfig(provider="anthropic", model=DEFAULT_OPUS_MODEL),
+                        ModelConfig(
+                            provider="openai", model=SHIPPED_TIER_LADDER["openai"]["frontier"]
+                        ),
+                        ModelConfig(
+                            provider="anthropic", model=SHIPPED_TIER_LADDER["anthropic"]["frontier"]
+                        ),
                     ],
                     use_cases=["consensus", "lateral_thinking", "big_bang"],
                 ),

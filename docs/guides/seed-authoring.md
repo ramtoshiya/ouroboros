@@ -9,6 +9,25 @@ doc_metadata:
 
 The Seed is Ouroboros's immutable specification -- a "constitution" that drives execution, evaluation, and drift control. This guide covers the YAML structure, field semantics, and best practices for writing effective seeds.
 
+### Structured first question for MCP hosts
+
+An in-process MCP host may start `ouroboros_interview` with
+`structured_first_question: true`. The first response contains
+`meta.first_question_presentation`: one question, two to four suggested choices,
+and a direct-input label. These choices are hypotheses until the user selects
+one. To record an explicit choice, send `session_id` and the 1-based integer
+`selected_first_choice`, without `answer`. To record a different or numeric
+free-text answer, send `session_id` and `answer` instead. A plain text `"1"` is
+always an answer, not a selection. Ask the user when their intent is unclear.
+
+The same pending presentation is returned after a session resume. Invalid
+provider output is reported as an error without echoing it; no extra provider
+call is made to repair it. This experimental path covers only the first question
+and single selection in the in-process mode. Later questions use the existing
+text flow; OpenCode plugin mode, multiple selections, and mixed-version writers
+are not supported by this option. The ordinary interview path is unchanged when
+the option is omitted.
+
 ## Seed YAML Schema
 
 ```yaml
@@ -319,7 +338,7 @@ metadata:
 When ACs have dependencies, Ouroboros automatically detects them and schedules independent ACs in parallel. To help the dependency analyzer:
 
 1. **Mention dependencies explicitly**: "depends on AC1's config module" helps the analyzer
-2. **Name shared files**: "Both AC2 and AC3 modify `src/config.py`" signals potential conflicts
+2. **Name shared files**: "Both AC2 and AC3 modify `src/config.py`" signals potential conflicts <!-- docs-drift: ignore -->
 3. **Order by dependency**: List foundation ACs first, integration ACs last
 
 ```yaml
@@ -332,6 +351,23 @@ acceptance_criteria:
   # Level 3: Integration (depends on Level 2)
   - "Create app entry point that integrates auth and logging"
 ```
+
+## Verification Working Directory
+
+Structured criteria can also set `verify_cwd` to a portable workspace-relative
+subdirectory alongside `verify_command`, for example `verify_cwd: app` for a
+test configuration in `app/`. Use `verify_cwd: "."` to select the workspace root
+explicitly and disable inference. Missing, escaping, symlinked, or replaced
+directories cannot supply accepted verification evidence. When cwd is omitted,
+complete recognized `npm`, `npx`, `yarn`, and `pnpm` invocations use the sole
+nested directory with `package.json` if there is no root manifest. Ambiguous
+projects, compound commands, and unsupported shell syntax use the workspace root.
+Commands with their own cwd selectors and `env -S` also retain root execution
+instead of inferring a directory. Secure non-root execution requires
+POSIX no-follow directory capabilities; when unavailable, including native Windows,
+the gate fails closed. Explicit root execution keeps existing platform behavior.
+`expected_artifacts` and workspace mutation checks always stay
+relative to the workspace root. Changing cwd invalidates prior execution evidence.
 
 ## Optional Investment Metadata
 

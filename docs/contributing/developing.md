@@ -61,10 +61,10 @@ client spawns the binary for you), install the local package with its isolated
 MCP 2 dependency profile:
 
 ```bash
-uv tool install --force --with 'mcp==2.2.0' --from . ouroboros-ai --python '>=3.12'
+uv tool install --force --with 'mcp==2.3.0' --from . ouroboros-ai --python '>=3.12'
 ```
 
-The exact `--with 'mcp==2.2.0'` pin supplies the separate MCP 2 SDK without
+The exact `--with 'mcp==2.3.0'` pin supplies the separate MCP 2 SDK without
 bypassing the repository's reviewed version. Keep it synchronized with the
 `mcp` optional dependency and `mcp-test` group in `pyproject.toml`. Do not add
 the MCP 1.x `[claude]`, `[claude-sdk]`, or `[all]` profiles to this
@@ -90,7 +90,7 @@ uv run --directory /path/to/your/clone --group mcp-test \
   ouroboros mcp serve --runtime claude-cli --llm-backend claude_code
 ```
 
-This executes the local package and supplies `mcp==2.2.0`. Do not combine this
+This executes the local package and supplies `mcp==2.3.0`. Do not combine this
 profile with the MCP 1.x `[claude]`, `[claude-sdk]`, or `[all]` profiles. The
 command is implemented by `serve()` in
 [`src/ouroboros/cli/commands/mcp.py`](../../src/ouroboros/cli/commands/mcp.py).
@@ -220,19 +220,18 @@ Scope your test runs while iterating:
 uv run pytest tests/unit/<area> -q
 ```
 
-For a broad local run, keep external MCP integration and end-to-end coverage
-separate while retaining the hermetic MCP unit suite:
-
-```bash
-uv run --group mcp-test pytest tests/ --ignore=tests/integration/mcp \
-  --ignore=tests/e2e -n auto --dist worksteal
-```
-
-`tests/conftest.py` redirects `$HOME` before collection and gives every test a
-separate home, so `tests/unit/mcp` cannot write to your real config, event DB,
-logs, or worktrees. Run that suite while changing MCP handlers; reserve the
-external integration and end-to-end suites for environments that provide their
-required services. See [Testing Guide](./testing-guide.md).
+For broader local runs and the CI-equivalent commands, use the
+[Testing Guide](./testing-guide.md). It describes the MCP test dependency
+profile, HOME isolation and the `loadgroup` scheduling required for tests that
+share the `built_wheel` fixture. Before running tests, check any inherited
+`CODEX_HOME` and platform-specific profile variables separately; redirecting
+`HOME` alone does not establish isolation for every user configuration path.
+The unit suite also reports new checkout worktree registrations under that
+pytest process's temporary roots. This guard only reads the registry; it does
+not clean up worktrees or provide OS isolation. Tests that start Auto should
+use `auto_project_cwd` or a temporary repository, rather than the checkout cwd.
+See the [guard](../../tests/_checkout_worktree_guard.py) and
+[unit fixtures](../../tests/unit/conftest.py).
 
 
 ## Before you open the PR

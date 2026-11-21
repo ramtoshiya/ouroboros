@@ -18,7 +18,9 @@ from ouroboros.core.security import MAX_LLM_RESPONSE_LENGTH, InputValidator
 from ouroboros.core.types import Result
 from ouroboros.events.io_recorder import IOJournalRecorder, get_current_io_journal_recorder
 from ouroboros.providers.anthropic_models import (
-    is_claude_5_5,
+    claude_accepts_prefill,
+    claude_accepts_sampling,
+    claude_accepts_temperature_and_top_p,
 )
 from ouroboros.providers.anthropic_models import (
     response_format_instruction as _response_format_instruction,
@@ -57,11 +59,6 @@ def _requires_adaptive_thinking_for_effort(model: str) -> bool:
     explicit envelope when the effort dial is set.
     """
     return not _is_fable_or_mythos_5(model)
-
-
-def _supports_sampling_and_prefill(model: str) -> bool:
-    """Return whether optional sampling knobs and assistant prefill are allowed."""
-    return not (_is_fable_or_mythos_5(model) or is_claude_5_5(model))
 
 
 def _serialise_prompt_for_hash(
@@ -209,6 +206,11 @@ class AnthropicAdapter:
                 api_key=self._api_key,
                 timeout=self._timeout,
                 max_retries=self._max_retries,
+                # SDK 2 defaults to 2026-10-21, which rejects sampling even
+                # through extra_body. Keep the existing CompletionConfig
+                # semantics rather than silently dropping callers' settings.
+                # https://platform.claude.com/docs/en/api/migration-2026-10-21
+                default_headers={"anthropic-version": "2023-06-01"},
             )
         return self._client
 
@@ -289,17 +291,16 @@ class AnthropicAdapter:
         if not api_messages:
             api_messages.append({"role": "user", "content": "(empty)"})
 
-        supports_sampling_and_prefill = _supports_sampling_and_prefill(model)
-
         # Anthropic doesn't support response_format natively. Use assistant
-        # prefill where the model family supports it; Claude 5.5 and Fable/Mythos 5 reject
-        # prefill, so steer JSON through system instructions instead.
+        # prefill only on families documented to accept it (before 4.6); every
+        # other Claude model rejects prefill, so steer JSON through system
+        # instructions instead.
         json_prefill = False
         if config.response_format and config.response_format.get("type") in (
             "json_object",
             "json_schema",
         ):
-            if supports_sampling_and_prefill:
+            if claude_accepts_prefill(model):
                 api_messages.append({"role": "assistant", "content": "{"})
                 json_prefill = True
             else:
@@ -311,15 +312,18 @@ class AnthropicAdapter:
             "max_tokens": config.max_tokens,
         }
 
-        if supports_sampling_and_prefill:
+        # Sampling goes only to families documented to accept it: Claude 4.7
+        # and later reject it outright, Claude 4 through 4.6 reject
+        # ``temperature`` and ``top_p`` together, and only Claude 3.x takes both.
+        if claude_accepts_sampling(model):
             # anthropic>=1.0 removed the typed ``temperature``/``top_p``
             # parameters from ``messages.create`` (TypeError when passed);
             # ``extra_body`` merges them into the request JSON with exactly
             # the wire shape the typed parameters produced on 0.x.
-            kwargs["extra_body"] = {
-                "temperature": config.temperature,
-                "top_p": config.top_p,
-            }
+            sampling: dict[str, float] = {"temperature": config.temperature}
+            if claude_accepts_temperature_and_top_p(model):
+                sampling["top_p"] = config.top_p
+            kwargs["extra_body"] = sampling
 
         if system_parts:
             kwargs["system"] = "\n\n".join(system_parts)
@@ -453,6 +457,13 @@ class AnthropicAdapter:
             content = reconstructed
 
         usage = response.usage
+        # SDK input_tokens excludes these additive cache groups. Retention
+        # details subdivide cache creation and must not be counted again.
+        cache_counts = (
+            getattr(usage, "cache_read_input_tokens", 0),
+            getattr(usage, "cache_creation_input_tokens", 0),
+        )
+        cache_tokens = sum(value for value in cache_counts if type(value) is int and value >= 0)
 
         return CompletionResponse(
             content=content,
@@ -461,6 +472,7 @@ class AnthropicAdapter:
                 prompt_tokens=usage.input_tokens if usage else 0,
                 completion_tokens=usage.output_tokens if usage else 0,
                 total_tokens=((usage.input_tokens + usage.output_tokens) if usage else 0),
+                unallocated_tokens=cache_tokens,
             ),
             finish_reason=response.stop_reason or "end_turn",
         )

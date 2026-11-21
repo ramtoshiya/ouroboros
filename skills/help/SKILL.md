@@ -1,6 +1,6 @@
 ---
 name: ouroboros-help
-description: "Full reference guide for Ouroboros commands and agents"
+description: "Ouroboros command reference and troubleshooting guidance for installation, MCP, status, and recovery"
 ---
 
 # /ouroboros:ouroboros-help
@@ -13,6 +13,25 @@ Full reference guide for Ouroboros power users.
 ooo help
 /ouroboros:ouroboros-help
 ```
+
+## Troubleshooting
+
+When asked to diagnose an Ouroboros installation, MCP connection, stalled job,
+or unexpected result, read [TROUBLESHOOTING.md](TROUBLESHOOTING.md) in this
+skill directory first. Resolve that relative path from the directory containing
+this `SKILL.md`, even if that directory is hidden. If the skill was delivered
+as a standalone cached entrypoint without its sibling file, use the Python
+interpreter belonging to that same Ouroboros installation to read its packaged resource:
+
+```bash
+python -c 'from importlib.resources import files; print(files("ouroboros").joinpath("skills", "help", "TROUBLESHOOTING.md").read_text(encoding="utf-8"))'
+```
+
+`python` above must be that installation's interpreter, not an arbitrary shell
+Python. If it cannot be identified or the resource is unavailable, say so and
+use the installed version's help. Follow the installed version's help and preserve the
+user's data and running work. Do not claim a repair or successful run without
+evidence.
 
 ## What Is Ouroboros?
 
@@ -32,13 +51,14 @@ Each `ooo <name>` is also the skill `/ouroboros:<name>`, except `run`, `status`,
 
 | Command | Purpose | Needs |
 |---------|---------|-------|
-| `ooo` / `ooo welcome` | First-touch onboarding | none |
-| `ooo setup` | Claude Code setup wizard | none |
-| `ooo tutorial` | Interactive hands-on learning | none |
+| `/ouroboros:welcome` | First-touch onboarding | none |
+| `/ouroboros:setup` | Claude Code setup wizard | none |
+| `/ouroboros:tutorial` | Interactive hands-on learning | none |
 | `ooo help` | This reference | none |
 | `ooo interview` | Socratic interview that exposes hidden assumptions | MCP, in-session fallback |
+| `ooo idk` | Calibrate interview wording from stated familiarity | MCP, in-session fallback |
 | `ooo seed` | Freeze interview results into a Seed | MCP, in-session fallback |
-| `ooo auto` | Goal to A-grade Seed, then execute and verify in the background | MCP |
+| `ooo auto` | Goal to a Seed, then execute and verify in the background | MCP |
 | `ooo run` | Execute a Seed and verify every acceptance criterion | MCP |
 | `ooo evaluate` | Mechanical checks, semantic review per criterion, consensus when uncertain | MCP, in-session fallback |
 | `ooo evolve` | Start or monitor an evolutionary loop across Seed generations | MCP |
@@ -66,6 +86,7 @@ In Claude Code these phrases route to a command without the `ooo` prefix:
 | Phrase | Command |
 |--------|---------|
 | "interview me", "clarify requirements", "socratic interview" | `ooo interview` |
+| "I don't know this term", "explain at my level" | `ooo idk` |
 | "crystallize", "generate seed", "create seed", "freeze requirements" | `ooo seed` |
 | "ouroboros run", "execute seed", "run seed", "run workflow" | `ooo run` |
 | "evaluate this", "3-stage check", "verify execution" | `ooo evaluate` |
@@ -97,6 +118,6 @@ In Claude Code these phrases route to a command without the `ooo` prefix:
 The last five are the `ooo unstuck` personas. Other files in
 `src/ouroboros/agents/` are internal pipeline roles.
 
-## RFC #1392 State Breadcrumb Footer
+## State Breadcrumb Footer
 
 End the final response with exactly one line `◆ <current state> → next: <recommended action>`. Derive the state from live session state via `ouroboros_session_status` when available, otherwise from this skill's actual outcome. Never use a linear `Step N of M` footer; when the next step is a real choice, list 2-3 options.

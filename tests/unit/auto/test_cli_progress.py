@@ -22,7 +22,7 @@ def test_make_progress_renderer_quiet_returns_none() -> None:
     assert _make_progress_renderer(quiet=True) is None
 
 
-def test_make_progress_renderer_emits_phase_grade_repair_lines(capsys) -> None:
+def test_make_progress_renderer_emits_phase_lines(capsys) -> None:
     render = _make_progress_renderer(quiet=False)
     assert render is not None
 
@@ -37,26 +37,16 @@ def test_make_progress_renderer_emits_phase_grade_repair_lines(capsys) -> None:
     render(
         AutoProgressEvent(
             auto_session_id="auto_x",
-            phase="review",
-            kind="grade",
-            message="Seed grade A",
-            grade="A",
-        )
-    )
-    render(
-        AutoProgressEvent(
-            auto_session_id="auto_x",
-            phase="repair",
-            kind="repair",
-            message="repair round 1",
-            round=1,
+            phase="run",
+            kind="phase",
+            message="starting execution for the written Seed",
         )
     )
 
     output = _strip_ansi(capsys.readouterr().out)
     assert "[auto] interview — asking interview round 3/12" in output
-    assert "[auto] grade A — Seed grade A" in output
-    assert "[auto] repair round 1 — repair round 1" in output
+    assert "[auto] run — starting execution for the written Seed" in output
+    assert "grade" not in output
 
 
 def test_make_progress_renderer_relays_interview_questions_and_answers(capsys) -> None:
@@ -103,6 +93,7 @@ def test_cli_auto_help_documents_quiet_flag() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("auto_project_cwd")
 async def test_cli_run_auto_threads_progress_callback_to_pipeline(monkeypatch, tmp_path) -> None:
     captured: dict[str, object] = {}
 
@@ -143,7 +134,6 @@ async def test_cli_run_auto_threads_progress_callback_to_pipeline(monkeypatch, t
         resume=None,
         runtime=None,
         max_interview_rounds=1,
-        max_repair_rounds=1,
         skip_run=False,
         progress_callback=cb,
     )
@@ -233,6 +223,7 @@ def test_auto_interview_driver_swallows_callback_errors() -> None:
     driver._save(state)
 
 
+@pytest.mark.usefixtures("auto_project_cwd")
 def test_cli_auto_quiet_suppresses_progress_lines(monkeypatch, tmp_path) -> None:
     """End-to-end: --quiet must not stream progress lines to the user."""
     from ouroboros.auto.state import AutoStore

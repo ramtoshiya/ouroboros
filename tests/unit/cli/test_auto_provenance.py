@@ -62,6 +62,7 @@ def test_resolve_provenance_rejects_oversize_env() -> None:
         resolve_provenance(env={PROVENANCE_ENV_VAR: big})
 
 
+@pytest.mark.usefixtures("auto_project_cwd")
 def test_auto_cli_picks_up_env_provenance(monkeypatch) -> None:
     """The gateway env var must flow through to AutoPipelineState."""
     captured: dict[str, object] = {}
@@ -72,7 +73,6 @@ def test_auto_cli_picks_up_env_provenance(monkeypatch) -> None:
             status="complete",
             auto_session_id=state.auto_session_id,
             phase="complete",
-            grade="A",
         )
 
     with patch("ouroboros.cli.commands.auto.AutoPipeline") as pipeline_cls:
@@ -108,6 +108,7 @@ def test_auto_cli_resume_rejects_attaching_provenance_to_direct_session(
     assert "cannot attach provenance on resume" in result.output
 
 
+@pytest.mark.usefixtures("auto_project_cwd")
 def test_auto_cli_without_env_keeps_state_provenance_none(monkeypatch) -> None:
     captured: dict[str, object] = {}
 
@@ -117,7 +118,6 @@ def test_auto_cli_without_env_keeps_state_provenance_none(monkeypatch) -> None:
             status="complete",
             auto_session_id=state.auto_session_id,
             phase="complete",
-            grade="A",
         )
 
     with patch("ouroboros.cli.commands.auto.AutoPipeline") as pipeline_cls:
